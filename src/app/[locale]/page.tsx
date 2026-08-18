@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Hero } from "@/components/home/hero";
 import { ServicesGrid } from "@/components/home/services-grid";
 import { ServicesVisuals } from "@/components/home/services-visuals";
+import { MinistryJusticeBanner } from "@/components/home/ministry-justice-banner";
 import { BahrainFeature } from "@/components/home/bahrain-feature";
 import { OfficeCard } from "@/components/office/office-card";
 import { SectionHeading } from "@/components/ui/section-heading";
@@ -79,6 +80,9 @@ export default async function Home({
       <BahrainFeature locale={locale} />
       <section className="reveal-section bg-[#ece7dc] py-24">
         <div className="container-site">
+          <div className="mb-16 -mx-4 sm:mx-0">
+            <MinistryJusticeBanner locale={locale} variant="home" />
+          </div>
           <SectionHeading
             eyebrow={ar ? "مجالات الخدمة" : "Practice areas"}
             title={ar ? "الخدمات القانونية" : "Legal Services"}
