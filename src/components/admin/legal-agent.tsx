@@ -14,7 +14,7 @@ import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid"
 import { agentSkills } from "@/data/agent-skills";
 
 type NodeResult = { id: string; label: string; status: "done" | "skipped" | "error"; ms: number; detail?: string };
-type CaseMatch = { id: string; caseNumber: string; caseYear: number; caseType: string; clientName: string; score: number };
+type CaseMatch = { id: string; caseNumber: string; caseYear: number; caseType: string; clientName: string; accusedName?: string; victimName?: string; court?: string; status?: string; judgment?: string; judgeName?: string; notes?: string; nextHearing?: string; score: number };
 type ChatAttachment = { id: string; name: string; type: string; size: number; previewUrl?: string };
 type PendingAttachment = ChatAttachment & { file: File };
 type ChatMessage = { id: string; role: "user" | "assistant"; content: string; attachments?: ChatAttachment[]; model?: string; nodes?: NodeResult[]; code?: string; codeResult?: string; sources?: AgentSource[]; images?: AgentImage[]; caseMatches?: CaseMatch[] };
@@ -73,8 +73,20 @@ function storableMessages(messages: ChatMessage[]) {
   })))) as ChatMessage[];
 }
 
+function linkCaseCitations(content: string, messageId: string, caseCount: number) {
+  return content.replace(/\[C(\d+)\](?!\()/g, (label, rawIndex: string) => {
+    const index = Number(rawIndex);
+    return index >= 1 && index <= caseCount ? `${label}(#case-${messageId}-${index})` : label;
+  });
+}
+
 function MessageAttachments({ attachments, ar }: { attachments: ChatAttachment[]; ar: boolean }) {
-  return <div className="mb-3 grid gap-2 sm:grid-cols-2">{attachments.map((attachment) => attachment.previewUrl ? (
+  return <div className="mb-3 grid gap-2">{attachments.map((attachment) => attachment.previewUrl && attachment.type === "application/pdf" ? (
+    <figure key={attachment.id} className="overflow-hidden border border-black/15 bg-black/10">
+      <iframe src={`${attachment.previewUrl}#page=1&view=FitH&toolbar=0`} title={attachment.name} className="h-[28rem] max-h-[65dvh] w-full bg-white sm:h-[38rem]" />
+      <figcaption className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-[10px]"><span className="min-w-0 truncate opacity-70">{attachment.name}</span><a href={attachment.previewUrl} target="_blank" rel="noreferrer" className="font-bold underline">{ar ? "فتح PDF كاملاً" : "Open full PDF"}</a></figcaption>
+    </figure>
+  ) : attachment.previewUrl ? (
     <figure key={attachment.id} className="overflow-hidden border border-black/10 bg-black/10">
       <Image src={attachment.previewUrl} alt={attachment.name} width={720} height={480} unoptimized className="max-h-72 w-full object-contain" />
       <figcaption className="truncate px-3 py-2 text-[10px] opacity-65">{attachment.name}</figcaption>
@@ -86,11 +98,12 @@ function MessageAttachments({ attachments, ar }: { attachments: ChatAttachment[]
   ))}</div>;
 }
 
-export function LegalAgent({ locale, user }: { locale: Locale; user: User }) {
+export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user: User; onOpenCases?: () => void }) {
   const ar = locale === "ar";
   const welcomeMessage: ChatMessage = { id: "welcome", role: "assistant", content: ar ? "مرحباً. أستطيع البحث في القضايا والمصادر البحرينية الرسمية، وتحليل الصور وملفات PDF والملفات النصية. يمكنك أيضاً إملاء سؤالك صوتياً." : "Hello. I can search cases and official Bahrain sources, analyze images, PDFs and text files, and accept voice-dictated questions." };
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
   const [input, setInput] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [conversations, setConversations] = useState<StoredConversation[]>([]);
   const [conversationId, setConversationId] = useState("");
@@ -103,6 +116,18 @@ export function LegalAgent({ locale, user }: { locale: Locale; user: User }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const speechRef = useRef<SpeechRecognitionLike | null>(null);
   const requestControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setInput(window.localStorage.getItem(`legal-agent-draft:${user.uid}`) ?? "");
+      setDraftReady(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [user.uid]);
+
+  useEffect(() => {
+    if (draftReady) window.localStorage.setItem(`legal-agent-draft:${user.uid}`, input);
+  }, [draftReady, input, user.uid]);
 
   useEffect(() => {
     if (cooldownUntil <= Date.now()) return;
@@ -144,7 +169,7 @@ export function LegalAgent({ locale, user }: { locale: Locale; user: User }) {
     if (unsupported) { setError(ar ? `نوع الملف غير مدعوم: ${unsupported.name}` : `Unsupported file type: ${unsupported.name}`); return; }
     const total = [...attachments.map((item) => item.size), ...incoming.map((file) => file.size)].reduce((sum, size) => sum + size, 0);
     if (total > maxTotalBytes) { setError(ar ? "إجمالي المرفقات يجب ألا يتجاوز 50MB." : "Attachments must total 50MB or less."); return; }
-    setAttachments((current) => [...current, ...incoming.map((file) => { const type = fileMimeType(file); return { id: crypto.randomUUID(), file, name: file.name, type, size: file.size, previewUrl: type.startsWith("image/") ? URL.createObjectURL(file) : undefined }; })]);
+    setAttachments((current) => [...current, ...incoming.map((file) => { const type = fileMimeType(file); return { id: crypto.randomUUID(), file, name: file.name, type, size: file.size, previewUrl: type.startsWith("image/") || type === "application/pdf" ? URL.createObjectURL(file) : undefined }; })]);
     setError("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -243,14 +268,14 @@ export function LegalAgent({ locale, user }: { locale: Locale; user: User }) {
       <div className="flex min-h-[min(680px,calc(100dvh-8rem))] min-w-0 flex-col bg-[#0c1c21]">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-4 sm:p-5"><div className="flex min-w-0 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center bg-[#b89555]/15 text-[#d0ad69] sm:size-11"><Bot /></span><div className="min-w-0"><h2 className="text-sm font-bold sm:text-base">{ar ? "وكيل القضايا والقانون البحريني" : "Bahrain cases & law agent"}</h2><p className="mt-1 text-xs text-white/40">RAG · Tavily · Gemini Multimodal</p></div></div><LiquidButton onClick={newConversation} className="focus-ring flex min-h-10 items-center gap-2 p-2 text-xs text-white/45 hover:text-white"><Trash2 size={15} />{ar ? "محادثة جديدة" : "New chat"}</LiquidButton></div>
         <div className="flex-1 space-y-5 overflow-y-auto p-3 sm:p-6">
-          {messages.map((message) => <article key={message.id} className={message.role === "user" ? "ms-auto max-w-2xl bg-[#b89555] p-4 text-[#10191b]" : "me-auto max-w-3xl overflow-hidden border border-white/10 bg-white/[.045] p-4 sm:p-5"}>
+          {messages.map((message) => <article key={message.id} className={message.role === "user" ? "ms-auto w-fit max-w-[min(100%,48rem)] bg-[#b89555] p-4 text-[#10191b]" : "w-full min-w-0 overflow-hidden border border-white/10 bg-white/[.045] p-4 sm:p-6"}>
             {message.attachments && message.attachments.length > 0 && <MessageAttachments attachments={message.attachments} ar={ar} />}
-            {message.role === "assistant" ? <MarkdownAnswer>{message.content}</MarkdownAnswer> : <p className="whitespace-pre-wrap leading-7">{message.content}</p>}
+            {message.role === "assistant" ? <MarkdownAnswer images={message.images}>{linkCaseCitations(message.content, message.id, message.caseMatches?.length ?? 0)}</MarkdownAnswer> : <p className="whitespace-pre-wrap leading-7">{message.content}</p>}
             {message.nodes && <div className="mt-5 flex flex-wrap gap-2 border-t border-white/8 pt-4">{message.nodes.map((node) => <span key={node.id} className={`flex items-center gap-1.5 border px-2.5 py-1 text-[10px] ${node.status === "done" ? "border-emerald-400/20 bg-emerald-400/5 text-emerald-200" : node.status === "error" ? "border-red-400/20 bg-red-400/5 text-red-200" : "border-white/10 text-white/35"}`}>{node.status === "done" ? <CheckCircle2 size={12} /> : <CircleDashed size={12} />}{node.label}{node.ms > 0 && ` · ${node.ms}ms`}</span>)}</div>}
             {(message.code || message.codeResult) && <details className="mt-4 border border-violet-300/15 bg-violet-300/5 p-3"><summary className="flex cursor-pointer items-center gap-2 text-xs font-bold text-violet-200"><TerminalSquare size={14} />{ar ? "تنفيذ Python المعزول" : "Sandboxed Python execution"}</summary>{message.code && <pre className="mt-3 max-h-64 overflow-auto bg-black/25 p-3 text-[11px] leading-5 text-violet-100" dir="ltr"><code>{message.code}</code></pre>}{message.codeResult && <pre className="mt-2 max-h-52 overflow-auto border-t border-white/10 p-3 text-[11px] leading-5 text-white/60" dir="ltr">{message.codeResult}</pre>}</details>}
-            {message.caseMatches && message.caseMatches.length > 0 && <details className="mt-4 border border-[#b89555]/20 bg-[#b89555]/5 p-3"><summary className="cursor-pointer text-xs font-bold text-[#e2c98f]">{ar ? `القضايا المسترجعة (${message.caseMatches.length})` : `Retrieved cases (${message.caseMatches.length})`}</summary><div className="mt-3 grid gap-2">{message.caseMatches.map((item) => <div key={item.id} className="flex flex-wrap justify-between gap-2 border-t border-white/8 pt-2 text-xs"><span dir="ltr">{item.caseNumber}/{item.caseYear}</span><span className="text-white/45">{item.caseType} · {item.clientName}</span></div>)}</div></details>}
+            {message.caseMatches && message.caseMatches.length > 0 && <section className="mt-4 border border-[#b89555]/20 bg-[#b89555]/5 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xs font-bold text-[#e2c98f]">{ar ? `القضايا المشار إليها (${message.caseMatches.length})` : `Referenced cases (${message.caseMatches.length})`}</h3>{onOpenCases && <LiquidButton type="button" onClick={onOpenCases} className="focus-ring min-h-9 border border-[#b89555]/25 px-3 text-[10px] font-bold text-[#e2c98f] hover:bg-[#b89555]/10">{ar ? "فتح قسم القضايا" : "Open cases section"}</LiquidButton>}</div><div className="mt-3 grid gap-2">{message.caseMatches.map((item, index) => <details id={`case-${message.id}-${index + 1}`} key={item.id} className="scroll-mt-24 border border-white/10 bg-black/10 p-3 open:border-[#b89555]/40 open:bg-[#b89555]/5"><summary className="flex cursor-pointer flex-wrap items-center gap-2 text-xs font-bold"><span className="rounded-sm bg-[#b89555]/15 px-1.5 py-0.5 text-[#e2c98f]">[C{index + 1}]</span><span dir="ltr">{item.caseNumber}/{item.caseYear}</span><span className="text-white/45">{item.caseType} · {item.clientName}</span></summary><dl className="mt-3 grid gap-x-5 gap-y-2 border-t border-white/8 pt-3 text-[11px] leading-5 sm:grid-cols-2">{[[ar ? "المحكمة" : "Court", item.court], [ar ? "الحالة" : "Status", item.status], [ar ? "المتهم/الخصم" : "Accused/opponent", item.accusedName], [ar ? "المجني عليه" : "Victim", item.victimName], [ar ? "القاضي/الهيئة" : "Judge/panel", item.judgeName], [ar ? "الجلسة القادمة" : "Next hearing", item.nextHearing], [ar ? "الحكم" : "Judgment", item.judgment], [ar ? "الملاحظات" : "Notes", item.notes]].filter((entry) => entry[1]).map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-white/35">{label}</dt><dd className="break-words text-white/75">{value}</dd></div>)}</dl></details>)}</div></section>}
             {message.sources && message.sources.length > 0 && <div className="mt-5"><h3 className="text-xs font-bold text-[#d0ad69]">{ar ? "مصادر البحث" : "Search sources"}</h3><div className="mt-2 grid gap-2">{message.sources.map((source) => { const favicon = faviconUrl(source.url); return <a key={source.url} href={source.url} target="_blank" rel="noreferrer noopener" className="focus-ring flex items-start gap-2 border border-white/8 p-3 text-xs text-white/65 hover:border-[#b89555]/40 hover:text-white">{favicon ? <Image src={favicon} alt="" width={16} height={16} unoptimized className="mt-0.5 size-4 shrink-0" /> : <ExternalLink className="mt-0.5 shrink-0" size={14} />}<span className="min-w-0 break-words">{source.title}</span><ExternalLink className="ms-auto mt-0.5 shrink-0 opacity-40" size={12} /></a>; })}</div></div>}
-            {message.images && message.images.length > 0 && <div className="mt-5"><h3 className="mb-2 flex items-center gap-2 text-xs font-bold text-[#d0ad69]"><ImageIcon size={14} />{ar ? "صور من نتائج البحث" : "Images from search"}</h3><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{message.images.map((image) => <a key={image.url} href={image.url} target="_blank" rel="noreferrer" title={image.description} className="aspect-video overflow-hidden bg-white/5"><Image src={image.url} alt={image.description || (ar ? "نتيجة بحث" : "Search result")} width={600} height={338} unoptimized className="h-full w-full object-cover transition hover:scale-105" /></a>)}</div></div>}
+            {message.images && message.images.length > 0 && <section className="mt-5"><h3 className="mb-2 flex items-center gap-2 text-xs font-bold text-[#d0ad69]"><ImageIcon size={14} />{ar ? "صور من نتائج البحث" : "Images from search"}</h3><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{message.images.map((image, index) => <a key={image.url} href={image.url} target="_blank" rel="noreferrer noopener" title={image.description} className={`group relative overflow-hidden border border-white/10 bg-black/20 ${index === 0 && message.images!.length > 2 ? "sm:col-span-2" : ""}`}><Image src={image.displayUrl || image.url} alt={image.description || (ar ? "نتيجة بحث مرئية" : "Visual search result")} width={960} height={540} unoptimized className={`w-full object-cover transition duration-300 group-hover:scale-[1.02] ${index === 0 ? "max-h-[28rem]" : "h-52"}`} />{image.description && <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-gradient-to-t from-black/90 to-transparent px-3 pb-2 pt-8 text-[10px] leading-4 text-white/80">{image.description}</span>}<ExternalLink className="absolute end-2 top-2 rounded-full bg-black/65 p-1.5 text-white/75" size={24} /></a>)}</div></section>}
             {message.model && <p className="mt-4 text-[10px] text-white/25" dir="ltr">{message.model}</p>}
           </article>)}
           {busy && <div className="me-auto flex items-center gap-3 border border-white/10 bg-white/[.045] p-4 text-sm text-white/55"><LoaderCircle className="animate-spin text-[#d0ad69]" size={18} />{ar ? "يقرأ المرفقات ويبحث ويرتب الأدلة…" : "Reading attachments, searching and ranking evidence…"}</div>}

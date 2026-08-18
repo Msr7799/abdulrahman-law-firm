@@ -8,8 +8,12 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false, nocache: true },
 };
 
-export default async function AdminPage({ params }: { params: Promise<{ locale: string }> }) {
+const adminTabs = new Set(["overview", "roadmap", "forms", "cases", "directory", "agent"]);
+
+export default async function AdminPage({ params, searchParams }: { params: Promise<{ locale: string }>; searchParams: Promise<{ adminTab?: string | string[] }> }) {
   const { locale } = await params;
   if (!isLocale(locale)) notFound();
-  return <AdminPortal locale={locale} />;
+  const requestedTab = (await searchParams).adminTab;
+  const initialTab = typeof requestedTab === "string" && adminTabs.has(requestedTab) ? requestedTab : "overview";
+  return <AdminPortal locale={locale} initialTab={initialTab} />;
 }

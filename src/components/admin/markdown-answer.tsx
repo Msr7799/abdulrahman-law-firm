@@ -3,6 +3,7 @@
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { AgentImage } from "@/types/admin";
 
 function safeHttpsUrl(value: string | undefined) {
   if (!value) return "";
@@ -15,12 +16,21 @@ function faviconUrl(value: string) {
   catch { return ""; }
 }
 
-export function MarkdownAnswer({ children }: { children: string }) {
+export function MarkdownAnswer({ children, images = [] }: { children: string; images?: AgentImage[] }) {
   return (
     <div className="admin-markdown">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-        a: ({ href, children: label }) => { const safeHref = safeHttpsUrl(href); return safeHref ? <a href={safeHref} target="_blank" rel="noreferrer noopener" className="inline-flex items-baseline gap-1"><Image src={faviconUrl(safeHref)} alt="" width={14} height={14} unoptimized className="inline size-3.5 shrink-0 self-center" />{label}</a> : <span>{label}</span>; },
-        img: ({ src, alt }) => { const safeSrc = safeHttpsUrl(typeof src === "string" ? src : undefined); return safeSrc ? <a href={safeSrc} target="_blank" rel="noreferrer noopener" className="my-3 block overflow-hidden border border-white/10 bg-black/10"><Image src={safeSrc} alt={alt || "Search image"} width={960} height={640} unoptimized className="max-h-[32rem] w-full object-contain" /></a> : null; },
+        a: ({ href, children: label }) => {
+          if (href?.startsWith("#case-")) return <a href={href} onClick={() => { const target = document.getElementById(href.slice(1)); if (target instanceof HTMLDetailsElement) target.open = true; }} className="inline-flex rounded-sm border border-[#d0ad69]/30 bg-[#d0ad69]/10 px-1 font-bold text-[#e2c98f] no-underline hover:bg-[#d0ad69]/20">{label}</a>;
+          const safeHref = safeHttpsUrl(href);
+          return safeHref ? <a href={safeHref} target="_blank" rel="noreferrer noopener" className="inline-flex items-baseline gap-1"><Image src={faviconUrl(safeHref)} alt="" width={14} height={14} unoptimized className="inline size-3.5 shrink-0 self-center" />{label}</a> : <span>{label}</span>;
+        },
+        table: ({ children: tableChildren }) => <div className="admin-markdown-table" role="region" aria-label="Scrollable table" tabIndex={0}><table>{tableChildren}</table></div>,
+        img: ({ src, alt }) => {
+          const safeSrc = safeHttpsUrl(typeof src === "string" ? src : undefined);
+          const displaySrc = images.find((image) => image.url === safeSrc)?.displayUrl || safeSrc;
+          return safeSrc && displaySrc ? <a href={safeSrc} target="_blank" rel="noreferrer noopener" className="my-4 block overflow-hidden border border-white/10 bg-black/10"><Image src={displaySrc} alt={alt || "Search image"} width={960} height={640} unoptimized className="max-h-[32rem] w-full object-contain" /></a> : null;
+        },
       }}>{children}</ReactMarkdown>
     </div>
   );

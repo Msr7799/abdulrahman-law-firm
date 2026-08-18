@@ -16,10 +16,11 @@ import { GovernmentForms } from "@/components/admin/government-forms";
 import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 
 type Tab = "overview" | "roadmap" | "forms" | "cases" | "directory" | "agent";
+const validTabs = new Set<Tab>(["overview", "roadmap", "forms", "cases", "directory", "agent"]);
 
-export function AdminDashboard({ locale, user }: { locale: Locale; user: User }) {
+export function AdminDashboard({ locale, user, initialTab }: { locale: Locale; user: User; initialTab: string }) {
   const ar = locale === "ar";
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(validTabs.has(initialTab as Tab) ? initialTab as Tab : "overview");
   const tabs = [
     { id: "overview" as const, label: ar ? "نظرة عامة" : "Overview", icon: LayoutDashboard },
     { id: "roadmap" as const, label: ar ? "خارطة القضاء" : "Roadmap", icon: Route },
@@ -28,6 +29,13 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
     { id: "directory" as const, label: ar ? "دليل المحامي" : "Legal directory", icon: PhoneCall },
     { id: "agent" as const, label: ar ? "الوكيل القانوني" : "Legal agent", icon: Bot },
   ];
+
+  function selectTab(nextTab: Tab) {
+    setTab(nextTab);
+    const url = new URL(window.location.href);
+    url.searchParams.set("adminTab", nextTab);
+    window.history.replaceState(window.history.state, "", url);
+  }
 
   return (
     <main id="main" className="admin-grid-bg min-h-[calc(100vh-5rem)] bg-[#091b21] text-white">
@@ -65,7 +73,7 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
             const Icon = item.icon;
             const active = tab === item.id;
             return (
-              <LiquidButton key={item.id} type="button" onClick={() => setTab(item.id)} className={`focus-ring relative flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-1 text-[10px] font-bold leading-tight transition sm:min-h-14 sm:flex-row sm:gap-2 sm:px-2 sm:text-sm ${active ? "bg-[#b89555] text-[#091b21] shadow-lg" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>
+              <LiquidButton key={item.id} type="button" onClick={() => selectTab(item.id)} className={`focus-ring relative flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-1 text-[10px] font-bold leading-tight transition sm:min-h-14 sm:flex-row sm:gap-2 sm:px-2 sm:text-sm ${active ? "bg-[#b89555] text-[#091b21] shadow-lg" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>
                 <Icon size={18} />{item.label}
               </LiquidButton>
             );
@@ -73,12 +81,12 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
         </nav>
 
         <section key={tab} className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-          {tab === "overview" && <DashboardOverview locale={locale} onOpen={setTab} />}
+          {tab === "overview" && <DashboardOverview locale={locale} onOpen={selectTab} />}
           {tab === "roadmap" && <JudicialRoadmap locale={locale} />}
           {tab === "forms" && <GovernmentForms locale={locale} />}
           {tab === "cases" && <CaseManager locale={locale} user={user} />}
           {tab === "directory" && <DirectoryManager locale={locale} user={user} />}
-          {tab === "agent" && <LegalAgent locale={locale} user={user} />}
+          {tab === "agent" && <LegalAgent locale={locale} user={user} onOpenCases={() => selectTab("cases")} />}
         </section>
       </div>
     </main>

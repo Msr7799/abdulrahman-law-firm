@@ -34,7 +34,7 @@ function friendlyError(error: unknown, ar: boolean) {
   return ar ? "تعذر إكمال تسجيل الدخول. حاول مرة أخرى." : "Unable to complete sign-in. Please try again.";
 }
 
-export function AdminPortal({ locale }: { locale: Locale }) {
+export function AdminPortal({ locale, initialTab }: { locale: Locale; initialTab: string }) {
   const ar = locale === "ar";
   const [authState, setAuthState] = useState<AuthState>("loading");
   const [user, setUser] = useState<User | null>(null);
@@ -97,7 +97,7 @@ export function AdminPortal({ locale }: { locale: Locale }) {
     finally { setBusy(false); }
   }
 
-  if (authState === "authorized" && user) return <AdminDashboard locale={locale} user={user} />;
+  if (authState === "authorized" && user) return <AdminDashboard locale={locale} user={user} initialTab={initialTab} />;
 
   if (authState === "loading" || authState === "checking") {
     return <div className="grid min-h-[70vh] place-items-center bg-[#0d2329] text-white"><div className="text-center"><LoaderCircle className="mx-auto animate-spin text-[#d0ad69]" size={36} /><p className="mt-4 text-sm text-white/60">{ar ? "جارٍ التحقق من صلاحية الإدارة…" : "Checking administrator access…"}</p></div></div>;

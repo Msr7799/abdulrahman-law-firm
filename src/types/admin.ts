@@ -36,4 +36,4 @@ export type DirectoryContact = {
 };
 
 export type AgentSource = { title: string; url: string; snippet?: string };
-export type AgentImage = { url: string; description?: string };
+export type AgentImage = { url: string; displayUrl?: string; description?: string };
