@@ -3,7 +3,7 @@ export const siteConfig = {
     ar: "المحامي عبدالرحمن عبدالله المعاودة",
     en: "Abdulrahman Almawdah",
   },
-  shortName: { ar: "عبدالرحمن المعاودة", en: "Abdulrahman Almawdah" },
+  shortName: { ar: "المحامي | عبدالرحمن المعاودة", en: "Lawyer | Abdulrahman Almawdah" },
   title: { ar: "محامٍ وموثق خاص", en: "Lawyer & Private Notary" },
   country: { ar: "مملكة البحرين", en: "Kingdom of Bahrain" },
   address: {
@@ -20,7 +20,7 @@ export const siteConfig = {
     googleMapsEmbed:
       "https://www.openstreetmap.org/export/embed.html?bbox=50.5811862%2C26.2349807%2C50.5931862%2C26.2469807&layer=mapnik&marker=26.2409807%2C50.5871862",
   },
-  siteUrl: process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
+  siteUrl: process.env.NEXT_PUBLIC_SITE_URL ?? "https://abdulrahman-lawyer-bh.vercel.app",
 } as const;
 
 export type Locale = "ar" | "en";

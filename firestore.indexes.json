@@ -1,0 +1,20 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "contacts",
+      "fieldPath": "notesAr",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "contacts",
+      "fieldPath": "notesEn",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "aiMessages",
+      "fieldPath": "content",
+      "indexes": []
+    }
+  ]
+}

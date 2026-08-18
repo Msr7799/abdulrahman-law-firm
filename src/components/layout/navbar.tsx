@@ -2,7 +2,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Languages, Menu, X } from "lucide-react";
+import { Languages, LockKeyhole, Menu, X } from "lucide-react";
 import { useState } from "react";
 import type { Locale } from "@/config/site";
 import { siteConfig } from "@/config/site";
@@ -21,13 +21,23 @@ export function Navbar({ locale }: { locale: Locale }) {
   ] as const;
   const switched = pathname.replace(/^\/(ar|en)/, `/${other}`);
   return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-[#10191b]/95 text-white backdrop-blur">
+    <header className="sticky top-0 z-50 border-b border-white/10 bg-[#10191b]/85 text-white backdrop-blur">
       <div className="container-site flex h-20 items-center justify-between gap-4">
         <Link
           href={`/${locale}`}
           className="focus-ring flex items-center gap-3"
           aria-label={m.nav.home}
         >
+          <span className="relative size-18 shrink-0 overflow-hidden">
+            <Image
+              src="/assets/logos/bahrain-official-logo-no-text.svg"
+              alt="bahrain official logo"
+              fill
+              priority
+              sizes="44px"
+              className="object-contain"
+            />
+          </span>
           <span className="relative size-11 shrink-0 overflow-hidden">
             <Image
               src="/assets/brand/logo-icon.svg"
@@ -62,6 +72,14 @@ export function Navbar({ locale }: { locale: Locale }) {
           ))}
         </nav>
         <div className="flex items-center gap-2">
+          <Link
+            href={`/${locale}/admin`}
+            className="focus-ring hidden min-h-11 items-center gap-2 border border-white/12 px-3 text-xs text-white/65 transition hover:border-[#d1b579]/50 hover:text-[#d1b579] md:flex"
+            title={locale === "ar" ? "دخول الإدارة" : "Admin sign-in"}
+          >
+            <LockKeyhole size={16} />
+            {locale === "ar" ? "الإدارة" : "Admin"}
+          </Link>
           <Link
             href={switched}
             className="focus-ring flex min-h-11 items-center gap-2 px-3 text-sm text-white/75 hover:text-white"
@@ -104,6 +122,14 @@ export function Navbar({ locale }: { locale: Locale }) {
             className="focus-ring mt-4 bg-[#b89555] p-4 text-center font-bold text-[#10191b]"
           >
             {m.nav.consultation}
+          </Link>
+          <Link
+            onClick={() => setOpen(false)}
+            href={`/${locale}/admin`}
+            className="focus-ring mt-3 flex min-h-12 items-center justify-center gap-2 border border-white/15 text-sm text-white/75"
+          >
+            <LockKeyhole size={17} />
+            {locale === "ar" ? "دخول الإدارة" : "Admin sign-in"}
           </Link>
         </nav>
       )}

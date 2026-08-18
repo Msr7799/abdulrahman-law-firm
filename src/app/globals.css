@@ -252,6 +252,45 @@ textarea {
     }
   }
 }
+.admin-grid-bg {
+  background-image:
+    linear-gradient(rgba(209, 181, 121, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(209, 181, 121, 0.045) 1px, transparent 1px),
+    radial-gradient(circle at 12% 10%, rgba(184, 149, 85, 0.12), transparent 28rem);
+  background-size: 42px 42px, 42px 42px, auto;
+}
+.admin-markdown {
+  color: rgba(255, 255, 255, 0.8);
+  line-height: 1.9;
+}
+.admin-markdown > :first-child { margin-top: 0; }
+.admin-markdown > :last-child { margin-bottom: 0; }
+.admin-markdown h1,
+.admin-markdown h2,
+.admin-markdown h3 {
+  margin: 1.4rem 0 0.55rem;
+  color: white;
+  font-family: var(--font-heading), sans-serif;
+  line-height: 1.35;
+}
+.admin-markdown h1 { font-size: 1.55rem; }
+.admin-markdown h2 { font-size: 1.3rem; }
+.admin-markdown h3 { font-size: 1.08rem; }
+.admin-markdown p,
+.admin-markdown ul,
+.admin-markdown ol,
+.admin-markdown blockquote,
+.admin-markdown table { margin: 0.7rem 0; }
+.admin-markdown ul,
+.admin-markdown ol { padding-inline-start: 1.4rem; }
+.admin-markdown ul { list-style: disc; }
+.admin-markdown ol { list-style: decimal; }
+.admin-markdown a { color: #d1b579; text-decoration: underline; text-underline-offset: 3px; }
+.admin-markdown blockquote { border-inline-start: 3px solid #b89555; background: rgba(184, 149, 85, 0.08); padding: 0.7rem 1rem; }
+.admin-markdown table { width: 100%; border-collapse: collapse; overflow: hidden; font-size: 0.9rem; }
+.admin-markdown th,
+.admin-markdown td { border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.6rem; text-align: start; }
+.admin-markdown code { border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(0, 0, 0, 0.25); padding: 0.12rem 0.35rem; font-size: 0.88em; }
 @media (prefers-reduced-motion: reduce) {
   * {
     scroll-behavior: auto !important;
