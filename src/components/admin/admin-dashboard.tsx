@@ -3,19 +3,24 @@
 import { useState } from "react";
 import type { User } from "firebase/auth";
 import { signOut } from "firebase/auth";
-import { Bot, BriefcaseBusiness, ExternalLink, LogOut, PhoneCall, ShieldCheck } from "lucide-react";
+import Image from "next/image";
+import { Bot, BriefcaseBusiness, ExternalLink, LayoutDashboard, LogOut, PhoneCall, Route, ShieldCheck } from "lucide-react";
 import type { Locale } from "@/config/site";
 import { firebaseAuth } from "@/lib/firebase/client";
 import { CaseManager } from "@/components/admin/case-manager";
 import { DirectoryManager } from "@/components/admin/directory-manager";
 import { LegalAgent } from "@/components/admin/legal-agent";
+import { DashboardOverview } from "@/components/admin/dashboard-overview";
+import { JudicialRoadmap } from "@/components/admin/judicial-roadmap";
 
-type Tab = "cases" | "directory" | "agent";
+type Tab = "overview" | "roadmap" | "cases" | "directory" | "agent";
 
 export function AdminDashboard({ locale, user }: { locale: Locale; user: User }) {
   const ar = locale === "ar";
-  const [tab, setTab] = useState<Tab>("cases");
+  const [tab, setTab] = useState<Tab>("overview");
   const tabs = [
+    { id: "overview" as const, label: ar ? "نظرة عامة" : "Overview", icon: LayoutDashboard },
+    { id: "roadmap" as const, label: ar ? "خارطة القضاء" : "Roadmap", icon: Route },
     { id: "cases" as const, label: ar ? "القضايا" : "Cases", icon: BriefcaseBusiness },
     { id: "directory" as const, label: ar ? "دليل المحامي" : "Legal directory", icon: PhoneCall },
     { id: "agent" as const, label: ar ? "الوكيل القانوني" : "Legal agent", icon: Bot },
@@ -26,13 +31,16 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
       <div className="container-site py-8 sm:py-12">
         <header className="mb-8 border border-white/10 bg-[#102a31]/90 p-5 shadow-2xl shadow-black/20 sm:p-7">
           <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
-            <div>
+            <div className="flex items-center gap-4">
+              <Image src="/assets/logos/bahrain-official-logo-no-text.svg" width={60} height={60} alt={ar ? "شعار مملكة البحرين" : "Kingdom of Bahrain emblem"} className="hidden h-14 w-auto sm:block" />
+              <div>
               <div className="mb-3 flex items-center gap-2 text-xs font-bold tracking-[.16em] text-[#d1b579]">
                 <ShieldCheck size={17} />
                 {ar ? "مساحة إدارة خاصة ومشفّرة" : "PRIVATE ADMIN WORKSPACE"}
               </div>
               <h1 className="display text-3xl sm:text-4xl">{ar ? "مكتب القضايا الذكي" : "Intelligent case office"}</h1>
               <p className="mt-2 text-sm text-white/55">{user.displayName || user.email}</p>
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <span className="flex items-center gap-2 border border-emerald-400/20 bg-emerald-400/8 px-4 py-2 text-xs text-emerald-300">
@@ -49,7 +57,7 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
           </div>
         </header>
 
-        <nav className="mb-6 grid grid-cols-3 border border-white/10 bg-black/20 p-1" aria-label={ar ? "أقسام الإدارة" : "Admin sections"}>
+        <nav className="mb-6 grid grid-cols-3 border border-white/10 bg-black/20 p-1 sm:grid-cols-5" aria-label={ar ? "أقسام الإدارة" : "Admin sections"}>
           {tabs.map((item) => {
             const Icon = item.icon;
             const active = tab === item.id;
@@ -62,6 +70,8 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
         </nav>
 
         <section key={tab} className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+          {tab === "overview" && <DashboardOverview locale={locale} onOpen={setTab} />}
+          {tab === "roadmap" && <JudicialRoadmap locale={locale} />}
           {tab === "cases" && <CaseManager locale={locale} user={user} />}
           {tab === "directory" && <DirectoryManager locale={locale} user={user} />}
           {tab === "agent" && <LegalAgent locale={locale} user={user} />}
