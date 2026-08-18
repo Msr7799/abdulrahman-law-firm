@@ -52,7 +52,7 @@ export function DashboardOverview({
                 : "Start with the judicial roadmap, manage the case file, keep important contacts, and use the legal agent for research and explanations."}
             </p>
           </div>
-          <div className="flex min-h-80 min-w-80 items-center justify-center p-1 sm:min-w-[26rem]">
+          <div className="flex min-h-64 min-w-0 w-full items-center justify-center p-1 sm:min-h-80 lg:w-auto lg:min-w-[26rem]">
             <Image
               src="/assets/logos/bahrain-ministry4justice-nobg-light.svg"
               width={560}
@@ -62,7 +62,7 @@ export function DashboardOverview({
                   ? "وزارة العدل والشؤون الإسلامية والأوقاف"
                   : "Ministry of Justice"
               }
-              className="h-72 w-auto max-w-full object-contain sm:h-80"
+              className="h-60 w-auto max-w-full object-contain sm:h-80"
             />
           </div>
         </div>
