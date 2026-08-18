@@ -18,11 +18,14 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated()
-        && request.auth.token.email_verified == true
-        && request.auth.token.email in [
-          'alromaihi2224@gmail.com',
-          'alromaihi2225@gmail.com'
-        ];
+        && (
+          (request.auth.token.email_verified == true
+            && request.auth.token.email in [
+              'alromaihi2224@gmail.com',
+              'alromaihi2225@gmail.com'
+            ])
+          || request.auth.token.email == 'alm3wdah@icloud.com'
+        );
     }
 
     function isOwner(userId) {
