@@ -53,11 +53,6 @@ export function AdminPortal({ locale }: { locale: Locale }) {
         setAuthState("signed-out");
         return;
       }
-      if (!currentUser.emailVerified) {
-        setAuthState("denied");
-        setError(ar ? "يجب تأكيد البريد الإلكتروني قبل دخول الإدارة." : "Verify your email before opening the dashboard.");
-        return;
-      }
       setAuthState("checking");
       const token = await currentUser.getIdToken();
       const response = await fetch("/api/admin/verify", { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });

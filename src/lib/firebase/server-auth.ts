@@ -9,13 +9,21 @@ type FirebaseAccount = {
 
 const fallbackApiKey = "AIzaSyDsBRK68dPSJeSfBR63GA8C4QUWwaPY44E";
 
-export function adminEmails() {
+function emailSet(value: string | undefined) {
   return new Set(
-    (process.env.ADMINS_EMAIL ?? "")
+    (value ?? "")
       .split(",")
       .map((email) => email.trim().toLowerCase())
       .filter(Boolean),
   );
+}
+
+export function adminEmails() {
+  return emailSet(process.env.ADMINS_EMAIL);
+}
+
+function unverifiedAdminExceptions() {
+  return emailSet(process.env.ADMIN_ALLOW_UNVERIFIED_EMAILS);
 }
 
 export async function verifyFirebaseAdminToken(idToken: string) {
@@ -35,7 +43,8 @@ export async function verifyFirebaseAdminToken(idToken: string) {
     const body = (await response.json()) as { users?: FirebaseAccount[] };
     const user = body.users?.[0];
     const email = user?.email?.toLowerCase();
-    if (!user || !email || !user.emailVerified || !adminEmails().has(email)) return null;
+    if (!user || !email || !adminEmails().has(email)) return null;
+    if (!user.emailVerified && !unverifiedAdminExceptions().has(email)) return null;
     return { uid: user.localId, email, displayName: user.displayName ?? email };
   } catch {
     return null;
