@@ -1,7 +1,8 @@
 import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
 import sharp from "sharp";
-import { verifyAgentImageSignature } from "@/lib/agent-image";
+import { signedAgentImagePath, verifyAgentImageSignature } from "@/lib/agent-image";
+import { bearerToken, verifyFirebaseAdminToken } from "@/lib/firebase/server-auth";
 
 export const runtime = "nodejs";
 
@@ -22,6 +23,25 @@ async function publicImageUrl(value: string) {
   return url;
 }
 
+async function fetchImage(start: URL) {
+  let current = start;
+  for (let redirect = 0; redirect < 5; redirect += 1) {
+    const response = await fetch(current, {
+      redirect: "manual",
+      headers: { accept: "image/avif,image/webp,image/png,image/jpeg,image/*", "user-agent": "Mozilla/5.0 (compatible; BahrainLegalResearch/1.0)" },
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) throw new Error("INVALID_REDIRECT");
+      current = await publicImageUrl(new URL(location, current).toString());
+      continue;
+    }
+    return response;
+  }
+  throw new Error("TOO_MANY_REDIRECTS");
+}
+
 export async function GET(request: Request) {
   try {
     const requestUrl = new URL(request.url);
@@ -29,13 +49,9 @@ export async function GET(request: Request) {
     const suppliedSignature = requestUrl.searchParams.get("sig") ?? "";
     if (!verifyAgentImageSignature(source, suppliedSignature)) return new Response("Unauthorized", { status: 401 });
     const imageUrl = await publicImageUrl(source);
-    const response = await fetch(imageUrl, {
-      redirect: "error",
-      headers: { accept: "image/avif,image/webp,image/png,image/jpeg,image/*", "user-agent": "Mozilla/5.0 (compatible; BahrainLegalResearch/1.0)" },
-      signal: AbortSignal.timeout(12_000),
-    });
+    const response = await fetchImage(imageUrl);
     const contentType = response.headers.get("content-type") ?? "";
-    if (!response.ok || !contentType.startsWith("image/")) return new Response("Image unavailable", { status: 502 });
+    if (!response.ok || (!contentType.startsWith("image/") && contentType !== "application/octet-stream")) return new Response("Image unavailable", { status: 502 });
     const input = Buffer.from(await response.arrayBuffer());
     if (input.byteLength > 12 * 1024 * 1024) return new Response("Image too large", { status: 413 });
     const output = await sharp(input).rotate().resize({ width: 1600, height: 1200, fit: "inside", withoutEnlargement: true }).webp({ quality: 84 }).toBuffer();
@@ -43,4 +59,13 @@ export async function GET(request: Request) {
   } catch {
     return new Response("Image unavailable", { status: 502 });
   }
+}
+
+
+export async function POST(request: Request) {
+  const admin = await verifyFirebaseAdminToken(bearerToken(request));
+  if (!admin) return Response.json({ ok: false, message: "Unauthorized" }, { status: 401 });
+  const body = await request.json().catch(() => null) as { urls?: unknown } | null;
+  const urls = Array.isArray(body?.urls) ? body.urls.filter((item): item is string => typeof item === "string" && item.startsWith("https://")).slice(0, 10) : [];
+  return Response.json({ ok: true, images: urls.map((url) => ({ url, displayUrl: signedAgentImagePath(url) })) });
 }

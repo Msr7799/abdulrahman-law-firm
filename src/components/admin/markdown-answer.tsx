@@ -4,6 +4,7 @@ import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentImage } from "@/types/admin";
+import { useState } from "react";
 
 function safeHttpsUrl(value: string | undefined) {
   if (!value) return "";
@@ -14,6 +15,13 @@ function safeHttpsUrl(value: string | undefined) {
 function faviconUrl(value: string) {
   try { return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(value).hostname)}&sz=32`; }
   catch { return ""; }
+}
+
+function MarkdownImage({ source, displaySource, alt }: { source: string; displaySource: string; alt?: string }) {
+  const [current, setCurrent] = useState(displaySource);
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return <a href={source} target="_blank" rel="noreferrer noopener" className="my-4 block overflow-hidden border border-white/10 bg-black/10"><Image src={current} alt={alt || "Search image"} width={960} height={640} unoptimized onError={() => { if (current !== source) setCurrent(source); else setFailed(true); }} className="max-h-[32rem] w-full object-contain" /></a>;
 }
 
 export function MarkdownAnswer({ children, images = [] }: { children: string; images?: AgentImage[] }) {
@@ -29,7 +37,7 @@ export function MarkdownAnswer({ children, images = [] }: { children: string; im
         img: ({ src, alt }) => {
           const safeSrc = safeHttpsUrl(typeof src === "string" ? src : undefined);
           const displaySrc = images.find((image) => image.url === safeSrc)?.displayUrl || safeSrc;
-          return safeSrc && displaySrc ? <a href={safeSrc} target="_blank" rel="noreferrer noopener" className="my-4 block overflow-hidden border border-white/10 bg-black/10"><Image src={displaySrc} alt={alt || "Search image"} width={960} height={640} unoptimized className="max-h-[32rem] w-full object-contain" /></a> : null;
+          return safeSrc && displaySrc ? <MarkdownImage source={safeSrc} displaySource={displaySrc} alt={alt || undefined} /> : null;
         },
       }}>{children}</ReactMarkdown>
     </div>
