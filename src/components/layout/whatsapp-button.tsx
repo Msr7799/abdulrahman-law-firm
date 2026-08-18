@@ -3,6 +3,7 @@
 import * as HoverCard from "@radix-ui/react-hover-card";
 import { Clock3, ExternalLink } from "lucide-react";
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import type { Locale } from "@/config/site";
 import { siteConfig } from "@/config/site";
 
@@ -15,11 +16,15 @@ function WhatsAppIcon() {
 }
 
 export function WhatsAppButton({ locale }: { locale: Locale }) {
+  const pathname = usePathname();
+  const adminRoute = /^\/(ar|en)\/admin(?:\/|$)/.test(pathname);
   const message =
     locale === "ar"
       ? "مرحباً، أود الاستفسار عن الخدمات القانونية."
       : "Hello, I would like to enquire about your legal services.";
   const href = `${siteConfig.contact.whatsapp}?text=${encodeURIComponent(message)}`;
+
+  if (adminRoute) return null;
 
   return (
     <HoverCard.Root openDelay={160} closeDelay={100}>

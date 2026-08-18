@@ -15,6 +15,7 @@ import {
   Pause,
   Play,
 } from "lucide-react";
+import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
@@ -175,7 +176,7 @@ export function Hero({ locale }: { locale: Locale }) {
                   }
                 >
                   {heroImages.map((image, index) => (
-                    <button
+                    <LiquidButton
                       key={image}
                       type="button"
                       role="tab"
@@ -197,7 +198,8 @@ export function Hero({ locale }: { locale: Locale }) {
                   ))}
                 </div>
 
-                <button
+                <LiquidButton
+                  size="icon"
                   type="button"
                   onClick={() =>
                     setPaused((value) => !value)
@@ -218,7 +220,7 @@ export function Hero({ locale }: { locale: Locale }) {
                   ) : (
                     <Pause size={15} />
                   )}
-                </button>
+                </LiquidButton>
               </div>
             </div>
 

@@ -7,6 +7,7 @@ import { useState } from "react";
 import type { Locale } from "@/config/site";
 import { siteConfig } from "@/config/site";
 import { getMessages } from "@/messages";
+import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 
 export function Navbar({ locale }: { locale: Locale }) {
   const [open, setOpen] = useState(false);
@@ -87,13 +88,11 @@ export function Navbar({ locale }: { locale: Locale }) {
             <Languages size={17} />
             {other.toUpperCase()}
           </Link>
-          <Link
-            href={`/${locale}/consultation`}
-            className="focus-ring hidden min-h-11 items-center bg-[#b89555] px-5 text-sm font-bold text-[#10191b] sm:flex"
-          >
-            {m.nav.consultation}
-          </Link>
-          <button
+          <LiquidButton asChild className="focus-ring hidden min-h-11 items-center bg-[#b89555] px-5 text-sm font-bold text-[#10191b] sm:flex">
+            <Link href={`/${locale}/consultation`}>{m.nav.consultation}</Link>
+          </LiquidButton>
+          <LiquidButton
+            size="icon"
             type="button"
             onClick={() => setOpen(!open)}
             className="focus-ring grid size-11 place-items-center lg:hidden"
@@ -101,7 +100,7 @@ export function Navbar({ locale }: { locale: Locale }) {
             aria-label={open ? "Close menu" : "Open menu"}
           >
             {open ? <X /> : <Menu />}
-          </button>
+          </LiquidButton>
         </div>
       </div>
       {open && (
@@ -116,13 +115,11 @@ export function Navbar({ locale }: { locale: Locale }) {
               {label}
             </Link>
           ))}
-          <Link
-            onClick={() => setOpen(false)}
-            href={`/${locale}/consultation`}
-            className="focus-ring mt-4 bg-[#b89555] p-4 text-center font-bold text-[#10191b]"
-          >
-            {m.nav.consultation}
-          </Link>
+          <LiquidButton asChild className="focus-ring mt-4 min-h-12 bg-[#b89555] p-4 text-center font-bold text-[#10191b]">
+            <Link onClick={() => setOpen(false)} href={`/${locale}/consultation`}>
+              {m.nav.consultation}
+            </Link>
+          </LiquidButton>
           <Link
             onClick={() => setOpen(false)}
             href={`/${locale}/admin`}

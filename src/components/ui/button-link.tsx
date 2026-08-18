@@ -14,10 +14,10 @@ export function ButtonLink({
   className?: string;
 }) {
   const styles = {
-    primary: "bg-[#b89555] text-[#10191b] hover:bg-[#cfb274]",
+    primary: "bg-[#b89555] text-[#10191b]",
     secondary: "border border-[#b89555]/60 text-[#f6f2e9] hover:bg-white/10",
     light:
-      "border border-[#132b32]/20 text-[#132b32] hover:bg-[#132b32] hover:text-white",
+      "border border-[#132b32]/20 hover:bg-[#132b32]/20 rounded-md bg-[#132b32]/30 text-[#f6f2e9] !hover:text-[#b89555]",
   };
   return (
     <Link

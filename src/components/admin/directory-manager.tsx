@@ -9,6 +9,7 @@ import { verifiedDirectory } from "@/data/admin-seed";
 import { normalizeSearch } from "@/lib/case-search";
 import { firestore } from "@/lib/firebase/client";
 import type { DirectoryContact } from "@/types/admin";
+import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 
 const categoryLabels: Record<string, { ar: string; en: string }> = {
   emergency: { ar: "الطوارئ والأمن", en: "Emergency & security" },
@@ -55,7 +56,7 @@ export function DirectoryManager({ locale, user }: { locale: Locale; user: User 
     <section>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><h2 className="display text-3xl">{ar ? "دليل اتصالات المحامي" : "Lawyer contact directory"}</h2><p className="mt-3 max-w-2xl text-sm leading-7 text-white/50">{ar ? "أرقام مختارة من صفحات حكومية أو مؤسسية رسمية، مع رابط المصدر وتاريخ التحقق. راجع المصدر قبل الاعتماد في حالة عاجلة." : "Numbers selected from official government or institutional pages, with source and verification date. Recheck the source before critical use."}</p></div>
-        {!loading && contacts.length === 0 && <button onClick={seedDirectory} disabled={busy} className="focus-ring flex min-h-12 items-center gap-2 bg-[#b89555] px-5 font-bold text-[#10191b] disabled:opacity-60">{busy ? <LoaderCircle className="animate-spin" size={18} /> : <ShieldCheck size={18} />}{ar ? "نشر الدليل في Firestore" : "Publish to Firestore"}</button>}
+        {!loading && contacts.length === 0 && <LiquidButton onClick={seedDirectory} disabled={busy} className="focus-ring flex min-h-12 items-center gap-2 bg-[#b89555] px-5 font-bold text-[#10191b] disabled:opacity-60">{busy ? <LoaderCircle className="animate-spin" size={18} /> : <ShieldCheck size={18} />}{ar ? "نشر الدليل في Firestore" : "Publish to Firestore"}</LiquidButton>}
       </div>
       {message && <p className="mt-5 border border-[#b89555]/25 bg-[#b89555]/10 p-3 text-sm text-[#e2c98f]">{message}</p>}
       <label className="relative mt-7 block"><Search className="absolute start-4 top-1/2 -translate-y-1/2 text-[#8b9698]" size={19} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={ar ? "ابحث باسم الجهة أو الرقم أو التصنيف…" : "Search organisation, number, or category…"} className="focus-ring min-h-13 w-full border border-white/15 bg-white/[.06] px-12 text-sm placeholder:text-white/35" /></label>

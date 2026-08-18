@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { User } from "firebase/auth";
 import { signOut } from "firebase/auth";
 import Image from "next/image";
-import { Bot, BriefcaseBusiness, ExternalLink, LayoutDashboard, LogOut, PhoneCall, Route, ShieldCheck } from "lucide-react";
+import { Bot, BriefcaseBusiness, ExternalLink, FileCheck2, LayoutDashboard, LogOut, PhoneCall, Route, ShieldCheck } from "lucide-react";
 import type { Locale } from "@/config/site";
 import { firebaseAuth } from "@/lib/firebase/client";
 import { CaseManager } from "@/components/admin/case-manager";
@@ -12,8 +12,10 @@ import { DirectoryManager } from "@/components/admin/directory-manager";
 import { LegalAgent } from "@/components/admin/legal-agent";
 import { DashboardOverview } from "@/components/admin/dashboard-overview";
 import { JudicialRoadmap } from "@/components/admin/judicial-roadmap";
+import { GovernmentForms } from "@/components/admin/government-forms";
+import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 
-type Tab = "overview" | "roadmap" | "cases" | "directory" | "agent";
+type Tab = "overview" | "roadmap" | "forms" | "cases" | "directory" | "agent";
 
 export function AdminDashboard({ locale, user }: { locale: Locale; user: User }) {
   const ar = locale === "ar";
@@ -21,6 +23,7 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
   const tabs = [
     { id: "overview" as const, label: ar ? "نظرة عامة" : "Overview", icon: LayoutDashboard },
     { id: "roadmap" as const, label: ar ? "خارطة القضاء" : "Roadmap", icon: Route },
+    { id: "forms" as const, label: ar ? "النماذج" : "Forms", icon: FileCheck2 },
     { id: "cases" as const, label: ar ? "القضايا" : "Cases", icon: BriefcaseBusiness },
     { id: "directory" as const, label: ar ? "دليل المحامي" : "Legal directory", icon: PhoneCall },
     { id: "agent" as const, label: ar ? "الوكيل القانوني" : "Legal agent", icon: Bot },
@@ -32,7 +35,7 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
         <header className="mb-8 border border-white/10 bg-[#102a31]/90 p-5 shadow-2xl shadow-black/20 sm:p-7">
           <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
             <div className="flex items-center gap-4">
-              <Image src="/assets/logos/bahrain-official-logo-no-text.svg" width={60} height={60} alt={ar ? "شعار مملكة البحرين" : "Kingdom of Bahrain emblem"} className="hidden h-14 w-auto sm:block" />
+              <span className="hidden min-w-20 place-items-center sm:grid"><Image src="/assets/logos/bahrain-official-logo-no-text-gold.svg" width={60} height={60} alt={ar ? "شعار مملكة البحرين الذهبي" : "Golden Kingdom of Bahrain emblem"} className="h-14 w-auto" /></span>
               <div>
               <div className="mb-3 flex items-center gap-2 text-xs font-bold tracking-[.16em] text-[#d1b579]">
                 <ShieldCheck size={17} />
@@ -50,21 +53,21 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
               <a href={`/${locale}`} target="_blank" className="focus-ring flex min-h-11 items-center gap-2 border border-white/15 px-4 text-sm hover:bg-white/5">
                 <ExternalLink size={16} />{ar ? "عرض الموقع" : "View site"}
               </a>
-              <button type="button" onClick={() => void signOut(firebaseAuth)} className="focus-ring flex min-h-11 items-center gap-2 bg-[#b89555] px-4 text-sm font-bold text-[#091b21] hover:bg-[#d1b579]">
+              <LiquidButton type="button" onClick={() => void signOut(firebaseAuth)} className="focus-ring flex min-h-11 items-center gap-2 bg-[#b89555] px-4 text-sm font-bold text-[#091b21] hover:bg-[#d1b579]">
                 <LogOut size={16} />{ar ? "تسجيل الخروج" : "Sign out"}
-              </button>
+              </LiquidButton>
             </div>
           </div>
         </header>
 
-        <nav className="mb-6 grid grid-cols-3 border border-white/10 bg-black/20 p-1 sm:grid-cols-5" aria-label={ar ? "أقسام الإدارة" : "Admin sections"}>
+        <nav className="mb-6 grid grid-cols-3 border border-white/10 bg-black/20 p-1 sm:grid-cols-6" aria-label={ar ? "أقسام الإدارة" : "Admin sections"}>
           {tabs.map((item) => {
             const Icon = item.icon;
             const active = tab === item.id;
             return (
-              <button key={item.id} type="button" onClick={() => setTab(item.id)} className={`focus-ring relative flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-1 text-[10px] font-bold leading-tight transition sm:min-h-14 sm:flex-row sm:gap-2 sm:px-2 sm:text-sm ${active ? "bg-[#b89555] text-[#091b21] shadow-lg" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>
+              <LiquidButton key={item.id} type="button" onClick={() => setTab(item.id)} className={`focus-ring relative flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-1 text-[10px] font-bold leading-tight transition sm:min-h-14 sm:flex-row sm:gap-2 sm:px-2 sm:text-sm ${active ? "bg-[#b89555] text-[#091b21] shadow-lg" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>
                 <Icon size={18} />{item.label}
-              </button>
+              </LiquidButton>
             );
           })}
         </nav>
@@ -72,6 +75,7 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
         <section key={tab} className="animate-in fade-in slide-in-from-bottom-2 duration-300">
           {tab === "overview" && <DashboardOverview locale={locale} onOpen={setTab} />}
           {tab === "roadmap" && <JudicialRoadmap locale={locale} />}
+          {tab === "forms" && <GovernmentForms locale={locale} />}
           {tab === "cases" && <CaseManager locale={locale} user={user} />}
           {tab === "directory" && <DirectoryManager locale={locale} user={user} />}
           {tab === "agent" && <LegalAgent locale={locale} user={user} />}

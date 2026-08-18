@@ -16,6 +16,7 @@ import {
   MessageCircle,
 } from "lucide-react";
 import type { Locale } from "@/config/site";
+import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 import { businessConfig, consultationSlots } from "@/config/business";
 import {
   consultationSchema,
@@ -134,15 +135,12 @@ export function BookingForm({ locale }: { locale: Locale }) {
                 : "One step remains: send the appointment details to the office on WhatsApp. The appointment is confirmed only after the office replies."}
           </p>
           {!result.notificationSent && (
-            <a
-              href={result.whatsappUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="focus-ring action-button mx-auto mt-7 inline-flex min-h-13 items-center gap-3 bg-[#16a765] px-7 font-bold text-white"
-            >
-              <MessageCircle size={21} />
-              {ar ? "إرسال الموعد عبر واتساب" : "Send appointment on WhatsApp"}
-            </a>
+            <LiquidButton asChild className="focus-ring mx-auto mt-7 min-h-13 bg-[#16a765] px-7 font-bold text-white">
+              <a href={result.whatsappUrl} target="_blank" rel="noreferrer">
+                <MessageCircle size={21} />
+                {ar ? "إرسال الموعد عبر واتساب" : "Send appointment on WhatsApp"}
+              </a>
+            </LiquidButton>
           )}
         </div>
       </motion.div>
@@ -372,9 +370,9 @@ export function BookingForm({ locale }: { locale: Locale }) {
             {serverError}
           </p>
         )}
-        <button
+        <LiquidButton
           disabled={isSubmitting}
-          className="focus-ring action-button flex min-h-14 items-center justify-center gap-2 bg-[#b89555] px-6 font-bold disabled:cursor-wait disabled:opacity-60 sm:col-span-2"
+          className="focus-ring flex min-h-14 items-center justify-center gap-2 bg-[#b89555] px-6 font-bold disabled:cursor-wait disabled:opacity-60 sm:col-span-2"
         >
           {isSubmitting ? (
             <LoaderCircle className="animate-spin" size={19} />
@@ -382,7 +380,7 @@ export function BookingForm({ locale }: { locale: Locale }) {
             <CalendarDays size={19} />
           )}
           {ar ? "تسجيل طلب الموعد" : "Register appointment request"}
-        </button>
+        </LiquidButton>
         <p className="text-center text-xs leading-6 text-[#657073] sm:col-span-2">
           {ar
             ? "الموعد المقترح لا يصبح مؤكداً إلا بعد موافقة المكتب عبر واتساب أو الهاتف."

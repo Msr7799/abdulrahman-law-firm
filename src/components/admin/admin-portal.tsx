@@ -16,6 +16,7 @@ import { onDisconnect, ref, set } from "firebase/database";
 import { FirebaseError } from "firebase/app";
 import { Eye, EyeOff, Gavel, LoaderCircle, LockKeyhole, LogIn, ShieldAlert } from "lucide-react";
 import type { Locale } from "@/config/site";
+import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 import { firebaseAuth, googleProvider, realtimeDatabase } from "@/lib/firebase/client";
 import { AdminDashboard } from "@/components/admin/admin-dashboard";
 
@@ -124,15 +125,15 @@ export function AdminPortal({ locale }: { locale: Locale }) {
           {authState === "denied" && <div className="mt-5 flex gap-3 border border-red-200 bg-red-50 p-4 text-sm text-red-800"><ShieldAlert className="shrink-0" size={19} />{error}</div>}
           <form onSubmit={emailSignIn} className="mt-8 grid gap-5">
             <label className="text-sm font-bold">{ar ? "البريد الإلكتروني" : "Email"}<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" required className="focus-ring mt-2 min-h-12 w-full border border-[#cfc8ba] bg-white px-4" dir="ltr" /></label>
-            <label className="text-sm font-bold">{ar ? "كلمة المرور" : "Password"}<span className="relative mt-2 block"><input value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? "text" : "password"} autoComplete="current-password" minLength={8} required className="focus-ring min-h-12 w-full border border-[#cfc8ba] bg-white px-4 pe-12" dir="ltr" /><button type="button" onClick={() => setShowPassword((value) => !value)} className="focus-ring absolute end-3 top-1/2 -translate-y-1/2 text-[#657073]" aria-label={ar ? "إظهار كلمة المرور" : "Show password"}>{showPassword ? <EyeOff size={19} /> : <Eye size={19} />}</button></span></label>
+            <label className="text-sm font-bold">{ar ? "كلمة المرور" : "Password"}<span className="relative mt-2 block"><input value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? "text" : "password"} autoComplete="current-password" minLength={8} required className="focus-ring min-h-12 w-full border border-[#cfc8ba] bg-white px-4 pe-12" dir="ltr" /><LiquidButton type="button" size="icon" onClick={() => setShowPassword((value) => !value)} className="focus-ring absolute end-3 top-1/2 -translate-y-1/2 text-[#657073]" aria-label={ar ? "إظهار كلمة المرور" : "Show password"}>{showPassword ? <EyeOff size={19} /> : <Eye size={19} />}</LiquidButton></span></label>
             {error && authState !== "denied" && <p className="text-sm text-red-700">{error}</p>}
             {notice && <p className="border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
-            <button disabled={busy} className="focus-ring flex min-h-13 items-center justify-center gap-2 bg-[#b89555] px-5 font-bold disabled:opacity-60">{busy ? <LoaderCircle className="animate-spin" size={18} /> : <LogIn size={18} />}{ar ? "دخول بالبريد" : "Sign in with email"}</button>
+            <LiquidButton disabled={busy} className="focus-ring flex min-h-13 items-center justify-center gap-2 bg-[#b89555] px-5 font-bold disabled:opacity-60">{busy ? <LoaderCircle className="animate-spin" size={18} /> : <LogIn size={18} />}{ar ? "دخول بالبريد" : "Sign in with email"}</LiquidButton>
           </form>
           <div className="my-6 flex items-center gap-3 text-xs text-[#657073]"><span className="h-px flex-1 bg-[#ded8cc]" />{ar ? "أو" : "OR"}<span className="h-px flex-1 bg-[#ded8cc]" /></div>
-          <button disabled={busy} onClick={googleSignIn} className="focus-ring flex min-h-13 w-full items-center justify-center gap-3 border border-[#cfc8ba] bg-white px-5 font-bold hover:border-[#b89555] disabled:opacity-60"><span className="text-xl font-black text-[#4285f4]">G</span>{ar ? "المتابعة باستخدام Google" : "Continue with Google"}</button>
-          <button disabled={busy || !email || password.length < 8} onClick={createAdminAccount} className="focus-ring mt-4 w-full p-3 text-sm font-semibold text-[#657073] underline-offset-4 hover:underline disabled:opacity-40">{ar ? "إنشاء حساب إدارة بالبريد لأول مرة" : "Create an administrator email account"}</button>
-          {authState === "denied" && <button onClick={() => void signOut(firebaseAuth)} className="focus-ring mt-3 w-full p-3 text-sm text-red-700">{ar ? "تسجيل الخروج وتجربة حساب آخر" : "Sign out and try another account"}</button>}
+          <LiquidButton disabled={busy} onClick={googleSignIn} className="focus-ring flex min-h-13 w-full items-center justify-center gap-3 border border-[#cfc8ba] bg-white px-5 font-bold hover:border-[#b89555] disabled:opacity-60"><span className="text-xl font-black text-[#4285f4]">G</span>{ar ? "المتابعة باستخدام Google" : "Continue with Google"}</LiquidButton>
+          <LiquidButton disabled={busy || !email || password.length < 8} onClick={createAdminAccount} className="focus-ring mt-4 w-full p-3 text-sm font-semibold text-[#657073] underline-offset-4 hover:underline disabled:opacity-40">{ar ? "إنشاء حساب إدارة بالبريد لأول مرة" : "Create an administrator email account"}</LiquidButton>
+          {authState === "denied" && <LiquidButton onClick={() => void signOut(firebaseAuth)} className="focus-ring mt-3 w-full p-3 text-sm text-red-700">{ar ? "تسجيل الخروج وتجربة حساب آخر" : "Sign out and try another account"}</LiquidButton>}
         </div>
       </div>
     </main>

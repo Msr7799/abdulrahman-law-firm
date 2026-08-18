@@ -9,6 +9,8 @@
 - `public/assets/images/professional/oath-ceremony-enhanced.webp` — enhanced professional event imagery.
 - `public/assets/images/social/instagram-profile.png` — current Instagram hover-card preview.
 - `public/assets/images/social/whatsapp-business.png` — WhatsApp Business hover-card preview.
+- `public/assets/logos/bahrain-official-logo-no-text.svg` — Kingdom of Bahrain emblem used in the private admin header and judicial roadmap.
+- `public/assets/logos/bahrain-ministry4justice-nobg.svg` — Ministry of Justice mark used in the admin workspace guide; displayed without altering the official proportions or colors.
 
 ## Archive
 

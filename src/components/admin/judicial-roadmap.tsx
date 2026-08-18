@@ -5,6 +5,7 @@ import Image from "next/image";
 import { ArrowUpLeft, Check, ChevronDown, ExternalLink, Landmark, Route } from "lucide-react";
 import type { Locale } from "@/config/site";
 import { judicialRoadmaps } from "@/data/judicial-roadmap";
+import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 
 export function JudicialRoadmap({ locale }: { locale: Locale }) {
   const ar = locale === "ar";
@@ -20,7 +21,7 @@ export function JudicialRoadmap({ locale }: { locale: Locale }) {
             <span className="grid size-12 shrink-0 place-items-center border border-[#d0ad69]/30 bg-[#d0ad69]/10 text-[#d0ad69]"><Route /></span>
             <div><p className="text-xs font-bold tracking-[.16em] text-[#d0ad69]">{ar ? "دليل المعاملات القضائية" : "JUDICIAL TRANSACTION GUIDE"}</p><h2 className="display mt-2 text-2xl sm:text-3xl">{ar ? "خارطة القضاء الإلكتروني" : "E-justice roadmap"}</h2><p className="mt-2 max-w-3xl text-sm leading-7 text-white/50">{ar ? "اختر نوع المعاملة لعرض خطوات العمل العملية وروابط الخدمات الرسمية. المدد والمتطلبات النهائية تُراجع في ملف القضية وصفحة الخدمة قبل الإيداع." : "Choose a transaction to see practical steps and official service links. Verify final requirements and time limits against the case file and service page before filing."}</p></div>
           </div>
-          <div className="flex shrink-0 items-center gap-3 border border-white/10 bg-white/[.035] p-3"><Image src="/assets/logos/bahrain-official-logo-no-text.svg" width={54} height={54} alt={ar ? "شعار مملكة البحرين" : "Kingdom of Bahrain emblem"} className="h-12 w-auto" /><div className="text-xs leading-5 text-white/45">{ar ? <>مبني على دليل خدمات<br /><strong className="text-white/75">البوابة الوطنية</strong></> : <>Based on the National Portal<br /><strong className="text-white/75">services catalogue</strong></>}</div></div>
+          <div className="flex shrink-0 items-center gap-3 border border-black/10 bg-[#fffdf8] p-3 text-[#10191b] shadow-lg"><Image src="/assets/logos/bahrain-official-logo-no-text.svg" width={54} height={54} alt={ar ? "شعار مملكة البحرين" : "Kingdom of Bahrain emblem"} className="h-12 w-auto" /><div className="text-xs leading-5 text-black/55">{ar ? <>مبني على دليل خدمات<br /><strong className="text-black/80">البوابة الوطنية</strong></> : <>Based on the National Portal<br /><strong className="text-black/80">services catalogue</strong></>}</div></div>
         </div>
       </div>
 
@@ -29,7 +30,7 @@ export function JudicialRoadmap({ locale }: { locale: Locale }) {
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
             {judicialRoadmaps.map((item, index) => {
               const active = item.id === roadmap.id;
-              return <button key={item.id} type="button" onClick={() => setSelected(item.id)} className={`focus-ring group flex min-h-20 items-center gap-3 border p-3 text-start transition ${active ? "border-[#b89555]/50 bg-[#b89555]/12 text-white" : "border-transparent text-white/50 hover:border-white/10 hover:bg-white/[.035] hover:text-white"}`}><span className={`grid size-9 shrink-0 place-items-center text-xs font-black ${active ? "bg-[#b89555] text-[#0c1c21]" : "bg-white/5 text-white/35"}`}>{String(index + 1).padStart(2, "0")}</span><span className="min-w-0"><strong className="block text-sm">{ar ? item.titleAr : item.titleEn}</strong><small className="mt-1 block truncate text-[10px] opacity-55">{ar ? item.audienceAr : item.audienceEn}</small></span><ChevronDown className={`ms-auto shrink-0 transition lg:-rotate-90 ${active ? "text-[#d0ad69]" : "opacity-0 group-hover:opacity-50"}`} size={15} /></button>;
+              return <LiquidButton key={item.id} type="button" onClick={() => setSelected(item.id)} className={`focus-ring group flex min-h-20 items-center gap-3 border p-3 text-start transition ${active ? "border-[#b89555]/50 bg-[#b89555]/12 text-white" : "border-transparent text-white/50 hover:border-white/10 hover:bg-white/[.035] hover:text-white"}`}><span className={`grid size-9 shrink-0 place-items-center text-xs font-black ${active ? "bg-[#b89555] text-[#0c1c21]" : "bg-white/5 text-white/35"}`}>{String(index + 1).padStart(2, "0")}</span><span className="min-w-0"><strong className="block text-sm">{ar ? item.titleAr : item.titleEn}</strong><small className="mt-1 block truncate text-[10px] opacity-55">{ar ? item.audienceAr : item.audienceEn}</small></span><ChevronDown className={`ms-auto shrink-0 transition lg:-rotate-90 ${active ? "text-[#d0ad69]" : "opacity-0 group-hover:opacity-50"}`} size={15} /></LiquidButton>;
             })}
           </div>
         </aside>

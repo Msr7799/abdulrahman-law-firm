@@ -4,6 +4,7 @@ import { siteConfig } from "@/config/site";
 import { businessConfig } from "@/config/business";
 import { isOfficeOpen } from "@/lib/open-status";
 import { getMessages } from "@/messages";
+import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 export function OfficeCard({ locale }: { locale: Locale }) {
   const m = getMessages(locale),
     open = isOfficeOpen();
@@ -42,15 +43,20 @@ export function OfficeCard({ locale }: { locale: Locale }) {
             <span className="mt-1 block">Asia/Bahrain</span>
           </div>
         </div>
-        <a
-          href={siteConfig.contact.googleMaps}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="focus-ring mt-8 inline-flex min-h-12 items-center gap-2 border border-[#132b32]/20 px-5 font-bold hover:bg-[#132b32] hover:text-white"
+        <LiquidButton
+          asChild
+          size="lg"
+          className="focus-ring mt-8 min-h-12 border border-[#9a783f] bg-[#b89555] px-5 font-bold text-[#10191b] hover:text-white"
         >
-          {m.common.maps}
-          <ExternalLink size={16} />
-        </a>
+          <a
+            href={siteConfig.contact.googleMaps}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {m.common.maps}
+            <ExternalLink size={16} />
+          </a>
+        </LiquidButton>
       </div>
     </div>
   );

@@ -138,6 +138,7 @@ export const judicialRoadmaps: JudicialRoadmap[] = [
 
 export const dashboardGuide = [
   { id: "roadmap", titleAr: "خارطة القضاء", titleEn: "Judicial roadmap", descriptionAr: "ابدأ منها لاختيار مسار المعاملة، ثم افتح الخدمة الحكومية المرتبطة بكل مرحلة.", descriptionEn: "Start here to choose a transaction path, then open the government service linked to each stage." },
+  { id: "forms", titleAr: "النماذج", titleEn: "Forms", descriptionAr: "أنشئ نموذج متابعة أو تكليف أو استلام مستندات بنسق مستلهم من دليل الهوية الحكومية.", descriptionEn: "Create follow-up, instruction or document handover forms based on the government identity guide." },
   { id: "cases", titleAr: "القضايا", titleEn: "Cases", descriptionAr: "أضف ملفات القضايا وابحث فيها وحدّث الجلسة والحكم والحالة التشغيلية.", descriptionEn: "Add and search case files, then update hearings, judgments and operating status." },
   { id: "directory", titleAr: "دليل المحامي", titleEn: "Lawyer directory", descriptionAr: "احفظ جهات الاتصال الرسمية والمهنية مع المصدر وتاريخ التحقق.", descriptionEn: "Keep official and professional contacts with source and verification date." },
   { id: "agent", titleAr: "الوكيل القانوني", titleEn: "Legal agent", descriptionAr: "اسأل عن قضية مسجلة أو اطلب شرح مسار حكومي؛ فعّل البحث الرسمي للمعلومات المتغيرة.", descriptionEn: "Ask about a stored case or government route; enable official search for changing information." },
