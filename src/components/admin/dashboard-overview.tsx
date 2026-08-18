@@ -15,7 +15,6 @@ import {
   dashboardGuide,
   importantLawyerContacts,
 } from "@/data/judicial-roadmap";
-import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 
 const icons = {
   roadmap: Route,
@@ -88,7 +87,7 @@ export function DashboardOverview({
           {dashboardGuide.map((item, index) => {
             const Icon = icons[item.id];
             return (
-              <LiquidButton
+              <button
                 key={item.id}
                 type="button"
                 onClick={() => onOpen(item.id)}
@@ -112,7 +111,7 @@ export function DashboardOverview({
                   {ar ? "فتح القسم" : "OPEN SECTION"}
                   {ar ? <ArrowUpLeft size={13} /> : <ExternalLink size={13} />}
                 </span>
-              </LiquidButton>
+              </button>
             );
           })}
         </div>

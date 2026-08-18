@@ -7,6 +7,7 @@ import type { AgentImage, AgentSource, LawCase } from "@/types/admin";
 import { roadmapKnowledgeForAgent } from "@/data/judicial-roadmap";
 import { agentSkillsForPrompt } from "@/data/agent-skills";
 import { signedAgentImagePath } from "@/lib/agent-image";
+import { cacheRemoteAgentImage } from "@/lib/agent-image-cache";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -150,11 +151,17 @@ async function tavilySearch(query: string, signal: AbortSignal) {
   if (!response.ok) return { sources: [] as AgentSource[], images: [] as AgentImage[], context: "" };
   const data = await response.json() as { results?: Array<{ title?: string; url?: string; content?: string }>; images?: Array<string | { url?: string; image_url?: string; description?: string }> };
   const sources = Array.from(new Map((data.results ?? []).filter((item) => item.url?.startsWith("https://")).map((item) => [item.url!, { title: item.title || item.url || "Source", url: item.url!, snippet: item.content?.slice(0, 700) }])).values());
-  const images = Array.from(new Map((data.images ?? [])
+  const imageCandidates = Array.from(new Map((data.images ?? [])
     .map((item) => typeof item === "string" ? { url: item } : { url: item.url ?? item.image_url ?? "", description: item.description })
     .filter((item) => item.url.startsWith("https://"))
     .map((item) => [item.url, item])).values()).slice(0, 8);
-  const context = sources.map((item, index) => `[W${index + 1}] ${item.title}\nURL: ${item.url}\n${item.snippet ?? ""}`).join("\n\n");
+  const images = (await Promise.all(imageCandidates.map(async (image) => {
+    try { const prepared = await cacheRemoteAgentImage(image.url); return { ...image, displayUrl: signedAgentImagePath(image.url, prepared.id) }; }
+    catch { return null; }
+  }))).filter((image): image is AgentImage & { displayUrl: string } => Boolean(image));
+  const sourceContext = sources.map((item, index) => `[W${index + 1}] ${item.title}\nURL: ${item.url}\n${item.snippet ?? ""}`).join("\n\n");
+  const imageContext = images.map((item, index) => `[I${index + 1}] ${item.description || "Verified search image"}\nIMAGE URL: ${item.url}`).join("\n\n");
+  const context = `${sourceContext}${imageContext ? `\n\nAVAILABLE VERIFIED IMAGES:\n${imageContext}` : ""}`;
   return { sources, images, context };
 }
 
@@ -190,6 +197,7 @@ Rules:
 18. Use a Markdown table only when it makes genuinely comparable structured data easier to scan (for example case comparisons, timelines, requirements, qualifications, or document fields). Avoid tables for prose, warnings, one-item lists, or content with long paragraphs. Keep tables mobile-friendly and normally at five columns or fewer.
 19. Use a short blockquote for the key conclusion or an important warning, bullet or numbered lists for steps, **bold** for key labels, and horizontal rules only between major phases. Do not output HTML, inline CSS, or arbitrary color instructions; the interface applies accessible colors consistently.
 20. For an attached CV or visual document, begin with a clear document title and an executive summary, then separate verified personal details, experience, education, skills, visual/layout observations, gaps or uncertainties, and practical recommendations. Explicitly describe any portrait, logo, signature, stamp, chart, or other image you can actually observe. Never infer an identity or visual detail that is not legible.
+21. When AVAILABLE VERIFIED IMAGES are supplied and the user asks for images, place the most relevant ones inside the answer using exact Markdown image syntax ![short Arabic description](exact IMAGE URL), followed by a normal source link when available. Never invent or alter an image URL. The interface will render and proxy these verified images safely.
 
 CORE LEGAL SKILLS:
 ${agentSkillsForPrompt()}
@@ -270,7 +278,7 @@ export async function POST(request: Request) {
     const result = await generate(prompt, preparedFiles.parts, request.signal);
     nodes.push({ id: "code", label: "Python sandbox", status: result.executableCode || result.codeExecutionResult ? "done" : "skipped", ms: 0, detail: result.executableCode ? "executed" : undefined });
     nodes.push({ id: "gemini", label: result.model, status: "done", ms: Date.now() - started });
-    return NextResponse.json({ ok: true, answer: result.text, model: result.model, nodes, code: result.executableCode, codeResult: result.codeExecutionResult, sources: web.sources, images: web.images.map((image) => ({ ...image, displayUrl: signedAgentImagePath(image.url) })), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
+    return NextResponse.json({ ok: true, answer: result.text, model: result.model, nodes, code: result.executableCode, codeResult: result.codeExecutionResult, sources: web.sources, images: web.images, caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
   } catch (error) {
     nodes.push({ id: "gemini", label: "Gemini", status: "error", ms: Date.now() - started });
     const message = error instanceof Error ? error.message : "AI_ERROR";

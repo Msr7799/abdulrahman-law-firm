@@ -9,8 +9,9 @@ function signature(value: string) {
   return createHmac("sha256", signingKey()).update(value).digest("base64url");
 }
 
-export function signedAgentImagePath(url: string) {
-  return `/api/admin/agent-image?url=${encodeURIComponent(url)}&sig=${signature(url)}`;
+export function signedAgentImagePath(url: string, id?: string) {
+  const cacheId = id ? `id=${encodeURIComponent(id)}&` : "";
+  return `/api/admin/agent-image?${cacheId}url=${encodeURIComponent(url)}&sig=${signature(url)}`;
 }
 
 export function verifyAgentImageSignature(url: string, supplied: string) {
