@@ -37,7 +37,7 @@ export default async function Home({
               />
               <div className="absolute inset-5 border border-[#b89555]/55" />
             </div>
-            <div className="absolute -bottom-5 -start-5 grid size-20 place-items-center bg-[#fffdf8] p-3 shadow-xl">
+            <div className="absolute -bottom-3 -start-2 grid size-16 place-items-center bg-[#fffdf8] p-2 shadow-xl sm:-bottom-5 sm:-start-5 sm:size-20 sm:p-3">
               <Image
                 src="/assets/brand/logo-icon.svg"
                 alt=""

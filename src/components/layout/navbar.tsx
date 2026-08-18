@@ -25,10 +25,10 @@ export function Navbar({ locale }: { locale: Locale }) {
       <div className="container-site flex h-20 items-center justify-between gap-4">
         <Link
           href={`/${locale}`}
-          className="focus-ring flex items-center gap-3"
+          className="focus-ring flex min-w-0 items-center gap-2 sm:gap-3"
           aria-label={m.nav.home}
         >
-          <span className="relative size-18 shrink-0 overflow-hidden">
+          <span className="relative size-14 shrink-0 overflow-hidden sm:size-18">
             <Image
               src="/assets/logos/bahrain-official-logo-no-text.svg"
               alt="bahrain official logo"
@@ -38,7 +38,7 @@ export function Navbar({ locale }: { locale: Locale }) {
               className="object-contain"
             />
           </span>
-          <span className="relative size-11 shrink-0 overflow-hidden">
+          <span className="relative size-9 shrink-0 overflow-hidden sm:size-11">
             <Image
               src="/assets/brand/logo-icon.svg"
               alt=""

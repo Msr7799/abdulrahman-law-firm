@@ -25,6 +25,9 @@ function friendlyError(error: unknown, ar: boolean) {
   const code = error instanceof FirebaseError ? error.code : "";
   if (code === "auth/invalid-credential") return ar ? "البريد أو كلمة المرور غير صحيحة." : "Incorrect email or password.";
   if (code === "auth/popup-closed-by-user") return ar ? "أُغلقت نافذة Google قبل اكتمال الدخول." : "Google sign-in was closed before completion.";
+  if (code === "auth/popup-blocked") return ar ? "المتصفح منع نافذة Google. اسمح بالنوافذ المنبثقة لهذا الموقع ثم حاول مجددًا." : "The browser blocked the Google window. Allow pop-ups for this site and try again.";
+  if (code === "auth/network-request-failed") return ar ? "تعذر الوصول إلى خوادم Firebase Authentication من شبكتك. جرّب شبكة أخرى أو VPN، ثم أعد المحاولة." : "Firebase Authentication is unreachable from this network. Try another network or a VPN, then retry.";
+  if (code === "auth/cancelled-popup-request") return ar ? "يوجد طلب دخول آخر مفتوح. أغلق النافذة السابقة وحاول مرة واحدة." : "Another sign-in request is open. Close the previous window and try once.";
   if (code === "auth/unauthorized-domain") return ar ? "نطاق الموقع غير مضاف إلى Authorized Domains في Firebase." : "This domain is not authorized in Firebase Authentication.";
   if (code === "auth/email-already-in-use") return ar ? "هذا البريد مسجل مسبقاً؛ استخدم تسجيل الدخول." : "This email is already registered; sign in instead.";
   return ar ? "تعذر إكمال تسجيل الدخول. حاول مرة أخرى." : "Unable to complete sign-in. Please try again.";

@@ -14,9 +14,11 @@
 }
 html {
   scroll-behavior: smooth;
+  overflow-x: clip;
 }
 body {
   margin: 0;
+  overflow-x: clip;
   background: var(--ivory);
   color: var(--ink);
   font-family: var(--font-ar), var(--font-en), sans-serif;
@@ -165,10 +167,26 @@ textarea {
   --rdp-accent-color: #132b32;
   --rdp-accent-background-color: #132b32;
   --rdp-day_button-border-radius: 0;
-  --rdp-day_button-width: 2.65rem;
-  --rdp-day_button-height: 2.65rem;
+  --rdp-day_button-width: clamp(2rem, 10vw, 2.65rem);
+  --rdp-day_button-height: clamp(2rem, 10vw, 2.65rem);
   margin: 0 auto;
   max-width: 25rem;
+}
+@media (min-width: 1536px) {
+  .container-site {
+    width: min(1440px, calc(100% - 5rem));
+  }
+}
+@media (max-width: 374px) {
+  .container-site {
+    width: min(1180px, calc(100% - 1.25rem));
+  }
+  .booking-calendar .rdp-root {
+    font-size: 0.85rem;
+  }
+  .booking-calendar .rdp-month_caption {
+    min-height: 2.5rem;
+  }
 }
 .booking-calendar .rdp-month,
 .booking-calendar .rdp-month_grid {

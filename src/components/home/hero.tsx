@@ -120,7 +120,8 @@ export function Hero({ locale }: { locale: Locale }) {
             <div className="absolute -inset-4 bg-[#212121] border border-[#b89555]/25 rounded-md" />
 
             {/* Image container */}
-<div className="relative h-[500px] overflow-hidden bg-black shadow-2xl sm:h-[540px] lg:h-[560px]">              <AnimatePresence
+            <div className="relative h-[clamp(380px,125vw,500px)] overflow-hidden bg-black shadow-2xl sm:h-[540px] lg:h-[560px]">
+              <AnimatePresence
                 initial={false}
                 mode="sync"
               >

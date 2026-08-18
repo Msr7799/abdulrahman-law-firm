@@ -32,7 +32,7 @@ export default async function Page({
               className="card focus-ring flex items-center gap-5 p-7"
             >
               <MessageCircle className="text-[#25a85a]" />
-              <div>
+              <div className="min-w-0">
                 <strong className="block">WhatsApp</strong>
                 <span className="text-sm text-[#657073]" dir="ltr">
                   {siteConfig.contact.phone}
@@ -46,7 +46,7 @@ export default async function Page({
               className="card focus-ring flex items-center gap-5 p-7"
             >
               <AtSign className="text-[#9a783f]" />
-              <div>
+              <div className="min-w-0">
                 <strong className="block">Instagram</strong>
                 <span className="text-sm text-[#657073]">
                   @{siteConfig.contact.instagramUsername}
@@ -60,7 +60,7 @@ export default async function Page({
               className="card focus-ring flex items-center gap-5 p-7"
             >
               <MapPin className="text-[#9a783f]" />
-              <div>
+              <div className="min-w-0">
                 <strong className="block">
                   {ar ? "خرائط Google" : "Google Maps"}
                 </strong>

@@ -196,7 +196,7 @@ export function BookingForm({ locale }: { locale: Locale }) {
       </div>
 
       <div className="grid border-b border-[#ded8cc] lg:grid-cols-[1.1fr_.9fr]">
-        <div className="booking-calendar border-b border-[#ded8cc] p-5 sm:p-8 lg:border-e lg:border-b-0">
+        <div className="booking-calendar min-w-0 border-b border-[#ded8cc] p-3 sm:p-8 lg:border-e lg:border-b-0">
           <DayPicker
             mode="single"
             selected={selectedDate}

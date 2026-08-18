@@ -54,7 +54,7 @@ export function AdminDashboard({ locale, user }: { locale: Locale; user: User })
             const Icon = item.icon;
             const active = tab === item.id;
             return (
-              <button key={item.id} type="button" onClick={() => setTab(item.id)} className={`focus-ring relative flex min-h-14 items-center justify-center gap-2 px-2 text-xs font-bold transition sm:text-sm ${active ? "bg-[#b89555] text-[#091b21] shadow-lg" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>
+              <button key={item.id} type="button" onClick={() => setTab(item.id)} className={`focus-ring relative flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-1 text-[10px] font-bold leading-tight transition sm:min-h-14 sm:flex-row sm:gap-2 sm:px-2 sm:text-sm ${active ? "bg-[#b89555] text-[#091b21] shadow-lg" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>
                 <Icon size={18} />{item.label}
               </button>
             );
