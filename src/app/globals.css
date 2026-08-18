@@ -241,6 +241,104 @@ textarea {
     radial-gradient(circle at 12% 10%, rgba(184, 149, 85, 0.12), transparent 28rem);
   background-size: 42px 42px, 42px 42px, auto;
 }
+
+/* Admin themes: charcoal/black + Bahrain red at night, warm off-white by day. */
+.dark .admin-shell {
+  color: #f7f2eb;
+  background-color: #080808 !important;
+  background-image:
+    radial-gradient(circle at 12% 8%, rgba(119, 17, 17, 0.2), transparent 30rem),
+    radial-gradient(circle at 88% 80%, rgba(75, 8, 8, 0.13), transparent 34rem),
+    linear-gradient(145deg, #070707 0%, #111010 52%, #190d10 100%);
+  background-size: auto;
+}
+.dark .admin-shell [class*="bg-[#102a31]"] { background-color: #181613 !important; }
+.dark .admin-shell .bg-\[\#0c1c21\] { background-color: #0e0e0e !important; }
+.dark .admin-shell .bg-\[\#0a252c\] { background-color: #17120d !important; }
+.dark .admin-shell .bg-\[\#101d21\] { background-color: #151515 !important; }
+.dark .admin-shell .bg-\[\#132b32\] { background-color: #1d1915 !important; }
+.dark .admin-shell [class*="bg-[#b89555]"] { background-color: rgba(119, 17, 17, 0.16) !important; }
+.dark .admin-shell .bg-\[\#b89555\],
+.dark .admin-shell .bg-\[\#d0ad69\],
+.dark .admin-shell .bg-\[\#d1b579\],
+.dark .admin-shell .bg-\[\#c8102e\],
+.dark .admin-shell .bg-\[\#da291c\],
+.dark .admin-shell .bg-\[\#771111\] { background-color: #771111 !important; }
+.dark .admin-shell .text-\[\#d0ad69\],
+.dark .admin-shell .text-\[\#d1b579\],
+.dark .admin-shell .text-\[\#e0c27f\],
+.dark .admin-shell .text-\[\#e2c98f\] { color: #b95757 !important; }
+.dark .admin-shell .border-\[\#b89555\],
+.dark .admin-shell .border-\[\#d0ad69\] { border-color: #771111 !important; }
+.dark .admin-shell .admin-overview-logo-light { display: none; }
+.dark .admin-shell .admin-overview-logo-dark { display: block; }
+
+.light .admin-shell {
+  color: #302a24;
+  background-color: #f5efe5 !important;
+  background-image:
+    radial-gradient(circle at 12% 8%, rgba(119, 17, 17, 0.09), transparent 30rem),
+    radial-gradient(circle at 88% 82%, rgba(85, 12, 12, 0.05), transparent 34rem),
+    linear-gradient(145deg, #fffdfa 0%, #f7f1e9 58%, #efe5d9 100%);
+  background-size: auto;
+}
+.light .admin-shell [class*="bg-[#102a31]"] { background-color: #fffaf2 !important; }
+.light .admin-shell .bg-\[\#0c1c21\] { background-color: #fffdf8 !important; }
+.light .admin-shell .bg-\[\#0a252c\] { background-color: #f3e7d8 !important; }
+.light .admin-shell .bg-\[\#101d21\] { background-color: #f8f0e5 !important; }
+.light .admin-shell .bg-\[\#132b32\] { background-color: #f0e3d4 !important; }
+.light .admin-shell [class*="bg-[#b89555]"] { background-color: rgba(119, 17, 17, 0.1) !important; }
+.light .admin-shell .bg-\[\#b89555\],
+.light .admin-shell .bg-\[\#d0ad69\],
+.light .admin-shell .bg-\[\#d1b579\],
+.light .admin-shell .bg-\[\#c8102e\],
+.light .admin-shell .bg-\[\#da291c\],
+.light .admin-shell .bg-\[\#771111\] { background-color: #771111 !important; }
+.light .admin-shell .text-\[\#d0ad69\],
+.light .admin-shell .text-\[\#d1b579\],
+.light .admin-shell .text-\[\#e0c27f\],
+.light .admin-shell .text-\[\#e2c98f\] { color: #771111 !important; }
+.light .admin-shell .border-\[\#b89555\],
+.light .admin-shell .border-\[\#d0ad69\] { border-color: #771111 !important; }
+.light .admin-shell [class*="bg-white/"] { background-color: rgba(255, 255, 255, 0.7) !important; }
+.light .admin-shell [class*="bg-black/"] { background-color: rgba(102, 68, 38, 0.055) !important; }
+.light .admin-shell [class*="border-white"] { border-color: rgba(75, 55, 38, 0.15) !important; }
+.light .admin-shell [class*="text-white"] { color: rgba(48, 42, 36, 0.76); }
+.light .admin-shell .text-white { color: #302a24; }
+.light .admin-shell input,
+.light .admin-shell textarea,
+.light .admin-shell select { color: #302a24; }
+.light .admin-shell .admin-theme-toggle { color: #771111 !important; background-color: rgba(119, 17, 17, 0.09) !important; border-color: rgba(119, 17, 17, 0.38) !important; }
+.light .admin-shell .admin-connection-status { color: #05603a !important; background-color: #dcfce7 !important; border-color: #4ade80 !important; box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.08); }
+.light .admin-shell .admin-status-dot,
+.light .admin-shell .admin-status-ping { background-color: #16a34a !important; }
+.light .admin-shell .admin-markdown { color: rgba(48, 42, 36, 0.86); }
+.light .admin-shell .admin-markdown h1 { color: #771111; }
+.light .admin-shell .admin-markdown h2 { color: #5b0d0d; }
+.light .admin-shell .admin-markdown h3,
+.light .admin-shell .admin-markdown strong { color: #5f1725; }
+.light .admin-shell .admin-markdown blockquote { color: #4d1111; background: rgba(119, 17, 17, 0.07); border-color: #771111; }
+.light .admin-shell .admin-markdown thead { color: #5b0d0d; background: rgba(119, 17, 17, 0.11); }
+.light .admin-shell .admin-markdown th,
+.light .admin-shell .admin-markdown td { border-color: rgba(75, 55, 38, 0.18); }
+
+.admin-shell .admin-logout-button,
+.admin-shell .admin-logout-button:hover,
+.admin-shell .admin-logout-button:focus-visible,
+.admin-shell .admin-logout-button svg { color: #fff !important; }
+.light .admin-shell .admin-logout-button,
+.light .admin-shell .admin-tab-active { color: #fff !important; }
+.admin-shell button.bg-\[\#b89555\],
+.admin-shell button.bg-\[\#d0ad69\],
+.admin-shell button.bg-\[\#d1b579\],
+.admin-shell button.bg-\[\#c8102e\],
+.admin-shell button.bg-\[\#da291c\],
+.admin-shell button.bg-\[\#771111\] { color: #fff !important; }
+.admin-shell button.bg-\[\#da291c\] [class*="text-white"] { color: rgba(255, 255, 255, 0.78) !important; }
+.admin-overview-logo-light { display: none; }
+.light .admin-shell .admin-overview-logo-light { display: block; }
+.light .admin-shell .admin-overview-logo-dark { display: none; }
+
 .admin-markdown {
   color: rgba(255, 255, 255, 0.8);
   font-size: clamp(0.9rem, 0.86rem + 0.15vw, 1rem);

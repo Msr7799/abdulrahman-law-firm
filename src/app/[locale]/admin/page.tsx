@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { AdminPortal } from "@/components/admin/admin-portal";
+import { AdminThemeProvider } from "@/components/admin/admin-theme-provider";
 import { isLocale } from "@/config/site";
 
 export const metadata: Metadata = {
@@ -15,5 +16,5 @@ export default async function AdminPage({ params, searchParams }: { params: Prom
   if (!isLocale(locale)) notFound();
   const requestedTab = (await searchParams).adminTab;
   const initialTab = typeof requestedTab === "string" && adminTabs.has(requestedTab) ? requestedTab : "overview";
-  return <AdminPortal locale={locale} initialTab={initialTab} />;
+  return <AdminThemeProvider><AdminPortal locale={locale} initialTab={initialTab} /></AdminThemeProvider>;
 }

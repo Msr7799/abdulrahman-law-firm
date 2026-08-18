@@ -53,6 +53,17 @@ export function DashboardOverview({
           </div>
           <div className="flex min-h-64 min-w-0 w-full items-center justify-center p-1 sm:min-h-80 lg:w-auto lg:min-w-[26rem]">
             <Image
+              src="/assets/logos/bahrain-ministry4justice-nobg-dark.svg"
+              width={560}
+              height={598}
+              alt={
+                ar
+                  ? "وزارة العدل والشؤون الإسلامية والأوقاف"
+                  : "Ministry of Justice"
+              }
+              className="admin-overview-logo-light h-60 w-auto max-w-full object-contain sm:h-80"
+            />
+            <Image
               src="/assets/logos/bahrain-ministry4justice-nobg-light.svg"
               width={560}
               height={598}
@@ -61,7 +72,7 @@ export function DashboardOverview({
                   ? "وزارة العدل والشؤون الإسلامية والأوقاف"
                   : "Ministry of Justice"
               }
-              className="h-60 w-auto max-w-full object-contain sm:h-80"
+              className="admin-overview-logo-dark h-60 w-auto max-w-full object-contain sm:h-80"
             />
           </div>
         </div>

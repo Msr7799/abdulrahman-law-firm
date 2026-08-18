@@ -18,10 +18,9 @@ function faviconUrl(value: string) {
 }
 
 function MarkdownImage({ source, displaySource, alt }: { source: string; displaySource: string; alt?: string }) {
-  const [current, setCurrent] = useState(displaySource);
   const [failed, setFailed] = useState(false);
   if (failed) return null;
-  return <a href={source} target="_blank" rel="noreferrer noopener" className="my-4 block overflow-hidden border border-white/10 bg-black/10"><Image src={current} alt={alt || "Search image"} width={960} height={640} unoptimized onError={() => { if (current !== source) setCurrent(source); else setFailed(true); }} className="max-h-[32rem] w-full object-contain" /></a>;
+  return <a href={source} target="_blank" rel="noreferrer noopener" className="my-4 block overflow-hidden border border-white/10 bg-black/10"><Image src={displaySource} alt={alt || "Search image"} width={960} height={640} unoptimized onError={() => setFailed(true)} className="max-h-[32rem] w-full object-contain" /></a>;
 }
 
 export function MarkdownAnswer({ children, images = [] }: { children: string; images?: AgentImage[] }) {
@@ -36,7 +35,7 @@ export function MarkdownAnswer({ children, images = [] }: { children: string; im
         table: ({ children: tableChildren }) => <div className="admin-markdown-table" role="region" aria-label="Scrollable table" tabIndex={0}><table>{tableChildren}</table></div>,
         img: ({ src, alt }) => {
           const safeSrc = safeHttpsUrl(typeof src === "string" ? src : undefined);
-          const displaySrc = images.find((image) => image.url === safeSrc)?.displayUrl || safeSrc;
+          const displaySrc = images.find((image) => image.url === safeSrc)?.displayUrl;
           return safeSrc && displaySrc ? <MarkdownImage source={safeSrc} displaySource={displaySrc} alt={alt || undefined} /> : null;
         },
       }}>{children}</ReactMarkdown>

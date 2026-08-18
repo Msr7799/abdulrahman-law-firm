@@ -103,10 +103,9 @@ function MessageAttachments({ attachments, ar }: { attachments: ChatAttachment[]
 }
 
 function SearchImageCard({ image, featured, ar }: { image: AgentImage; featured: boolean; ar: boolean }) {
-  const [source, setSource] = useState(image.displayUrl || image.url);
   const [failed, setFailed] = useState(false);
-  if (failed) return null;
-  return <a href={image.url} target="_blank" rel="noreferrer noopener" title={image.description} className={`group relative overflow-hidden border border-white/10 bg-black/20 ${featured ? "sm:col-span-2" : ""}`}><Image src={source} alt={image.description || (ar ? "نتيجة بحث مرئية" : "Visual search result")} width={960} height={540} unoptimized onError={() => { if (source !== image.url) setSource(image.url); else setFailed(true); }} className={`w-full object-cover transition duration-300 group-hover:scale-[1.02] ${featured ? "max-h-[28rem]" : "h-52"}`} />{image.description && <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-gradient-to-t from-black/90 to-transparent px-3 pb-2 pt-8 text-[10px] leading-4 text-white/80">{image.description}</span>}<ExternalLink className="absolute end-2 top-2 rounded-full bg-black/65 p-1.5 text-white/75" size={24} /></a>;
+  if (failed || !image.displayUrl) return null;
+  return <a href={image.url} target="_blank" rel="noreferrer noopener" title={image.description} className={`group relative overflow-hidden border border-white/10 bg-black/20 ${featured ? "sm:col-span-2" : ""}`}><Image src={image.displayUrl} alt={image.description || (ar ? "نتيجة بحث مرئية" : "Visual search result")} width={960} height={540} unoptimized onError={() => setFailed(true)} className={`w-full object-cover transition duration-300 group-hover:scale-[1.02] ${featured ? "max-h-[28rem]" : "h-52"}`} />{image.description && <span className="absolute inset-x-0 bottom-0 line-clamp-2 bg-gradient-to-t from-black/90 to-transparent px-3 pb-2 pt-8 text-[10px] leading-4 text-white/80">{image.description}</span>}<ExternalLink className="absolute end-2 top-2 rounded-full bg-black/65 p-1.5 text-white/75" size={24} /></a>;
 }
 
 export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user: User; onOpenCases?: () => void }) {
