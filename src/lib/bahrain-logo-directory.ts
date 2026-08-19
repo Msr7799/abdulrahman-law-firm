@@ -48,7 +48,7 @@ function dedupe(logos: BahrainLogoRecord[]) {
 
 export async function getBahrainLogoDirectory() {
   if (cachedLogos) return cachedLogos;
-  const candidates = ["bahrain-logos-all-categorized.html", "bahrain-logo.html", "bahrain-logo(1).html"];
+  const candidates = ["bahrain-logos-all-categorized.html"];
   for (const filename of candidates) {
     try {
       const html = await readFile(path.join(process.cwd(), filename), "utf8");
