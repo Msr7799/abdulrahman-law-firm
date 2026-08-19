@@ -1,171 +1,153 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import Image from "next/image";
-import { FileCheck2, Info, Printer, RotateCcw, ShieldAlert } from "lucide-react";
-import type { Locale } from "@/config/site";
+import { useMemo, useRef, useState } from "react";
+import { ArrowUpLeft, CheckCircle2, ExternalLink, FileCheck2, Files, Printer, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
+import type { Locale } from "@/config/site";
+import { judicialServices, ministryFormCategories, ministryForms, type MinistryForm, type MinistryFormCategory } from "@/data/government-forms";
 
-type FormKind = "transaction" | "case-action" | "documents";
+type Field = { id: string; ar: string; en: string; type?: "text" | "date" | "number" | "email" | "tel" | "textarea"; required?: boolean; wide?: boolean };
 
-type FormData = {
-  clientName: string;
-  personalNumber: string;
-  caseNumber: string;
-  caseYear: string;
-  court: string;
-  opponent: string;
-  requestDate: string;
-  referenceNumber: string;
-  subject: string;
-  details: string;
-  attachments: string;
-  nextAction: string;
-  deadline: string;
-  preparedBy: string;
-  reviewedBy: string;
-  status: string;
+const commonFields: Field[] = [
+  { id: "applicantName", ar: "اسم مقدم الطلب", en: "Applicant name", required: true, wide: true },
+  { id: "personalNumber", ar: "الرقم الشخصي / رقم السجل", en: "Personal / CR number", required: true },
+  { id: "phone", ar: "رقم الهاتف", en: "Phone number", type: "tel", required: true },
+  { id: "email", ar: "البريد الإلكتروني", en: "Email", type: "email" },
+  { id: "requestDate", ar: "تاريخ الطلب", en: "Request date", type: "date", required: true },
+  { id: "referenceNumber", ar: "رقم المرجع", en: "Reference number" },
+];
+
+const categoryFields: Record<MinistryFormCategory, Field[]> = {
+  realEstate: [
+    { id: "projectName", ar: "اسم المشروع العقاري", en: "Real-estate project", required: true, wide: true },
+    { id: "developerName", ar: "اسم المطور", en: "Developer name", required: true },
+    { id: "unitNumber", ar: "رقم الوحدة / العقار", en: "Unit / property number" },
+    { id: "claimAmount", ar: "قيمة المطالبة (د.ب)", en: "Claim amount (BHD)", type: "number" },
+  ],
+  execution: [
+    { id: "executionFile", ar: "رقم ملف التنفيذ", en: "Enforcement file number", required: true },
+    { id: "court", ar: "محكمة التنفيذ", en: "Enforcement court", required: true },
+    { id: "debtorName", ar: "اسم المنفذ ضده", en: "Enforcement debtor", required: true },
+    { id: "instrument", ar: "بيانات السند التنفيذي", en: "Enforcement instrument", wide: true },
+  ],
+  accounts: [
+    { id: "accountName", ar: "اسم صاحب الحساب", en: "Account holder", required: true, wide: true },
+    { id: "bankName", ar: "اسم البنك", en: "Bank name", required: true },
+    { id: "iban", ar: "رقم الحساب الدولي IBAN", en: "IBAN", required: true, wide: true },
+  ],
+  notary: [
+    { id: "customerCapacity", ar: "صفة العميل", en: "Customer capacity", required: true },
+    { id: "transactionPurpose", ar: "الغرض من المعاملة", en: "Transaction purpose", required: true, wide: true },
+    { id: "sourceOfFunds", ar: "مصدر الأموال", en: "Source of funds", wide: true },
+  ],
+  minors: [
+    { id: "fileNumber", ar: "رقم ملف القاصر / التركة", en: "Minor / estate file number" },
+    { id: "minorName", ar: "اسم القاصر / صاحب التركة", en: "Minor / estate owner", required: true, wide: true },
+    { id: "relationship", ar: "صفة مقدم الطلب / صلة القرابة", en: "Applicant capacity / relationship", required: true },
+  ],
+  sharia: [
+    { id: "documentType", ar: "نوع الوثيقة الشرعية", en: "Sharia document type", required: true },
+    { id: "concernedName", ar: "اسم صاحب الشأن / المتوفى", en: "Concerned person / deceased", required: true, wide: true },
+    { id: "shariaCourt", ar: "المحكمة الشرعية", en: "Sharia court" },
+  ],
+  marriage: [
+    { id: "firstParty", ar: "اسم الطرف الأول", en: "First party", required: true, wide: true },
+    { id: "secondParty", ar: "اسم الطرف الثاني", en: "Second party", required: true, wide: true },
+    { id: "nationality", ar: "الجنسية", en: "Nationality" },
+    { id: "contractDate", ar: "تاريخ العقد", en: "Contract date", type: "date" },
+  ],
+  courts: [
+    { id: "caseNumber", ar: "رقم الدعوى", en: "Case number" },
+    { id: "caseYear", ar: "سنة الدعوى", en: "Case year", type: "number" },
+    { id: "court", ar: "المحكمة / الدائرة", en: "Court / circuit", required: true },
+    { id: "opponent", ar: "الخصم / الطرف الآخر", en: "Opponent / other party", wide: true },
+  ],
 };
 
-const emptyForm = (): FormData => ({
-  clientName: "",
-  personalNumber: "",
-  caseNumber: "",
-  caseYear: String(new Date().getFullYear()),
-  court: "",
-  opponent: "",
-  requestDate: new Date().toISOString().slice(0, 10),
-  referenceNumber: "",
-  subject: "",
-  details: "",
-  attachments: "",
-  nextAction: "",
-  deadline: "",
-  preparedBy: "",
-  reviewedBy: "",
-  status: "draft",
-});
+const closingFields: Field[] = [
+  { id: "subject", ar: "موضوع الطلب", en: "Request subject", required: true, wide: true },
+  { id: "details", ar: "تفاصيل الطلب والوقائع", en: "Request details and facts", type: "textarea", required: true, wide: true },
+  { id: "attachments", ar: "المرفقات — كل مستند في سطر", en: "Attachments — one document per line", type: "textarea", wide: true },
+  { id: "notes", ar: "ملاحظات", en: "Notes", type: "textarea", wide: true },
+];
 
-const formDefinitions = {
-  transaction: {
-    number: "LAW-FRM-01",
-    titleAr: "متابعة معاملة قضائية إلكترونية",
-    titleEn: "E-Justice Transaction Follow-up",
-    instructionAr: "استخدمه لتوثيق رقم الطلب وحالة المعاملة والإجراء التالي بعد التقديم الإلكتروني.",
-    instructionEn: "Use this to record the request number, transaction status and next action after online submission.",
-  },
-  "case-action": {
-    number: "LAW-FRM-02",
-    titleAr: "تكليف بإجراء على قضية",
-    titleEn: "Case Action Instruction",
-    instructionAr: "استخدمه لإسناد إجراء محدد في ملف قضية مع الموعد والمرفقات والمراجع المطلوبة.",
-    instructionEn: "Use this to assign a defined case action with its deadline, attachments and required references.",
-  },
-  documents: {
-    number: "LAW-FRM-03",
-    titleAr: "استلام وتسليم مستندات موكل",
-    titleEn: "Client Document Handover",
-    instructionAr: "استخدمه لتسجيل المستندات المستلمة أو المسلّمة والغرض منها والمسؤول عنها.",
-    instructionEn: "Use this to record documents received or returned, their purpose and responsible person.",
-  },
-} as const;
-
-function displayDate(value: string, ar: boolean) {
-  if (!value) return "—";
-  const [year, month, day] = value.split("-");
-  return ar ? `${year}/${month}/${day}` : `${day}/${month}/${year}`;
-}
+function makeInitialValues() { return { requestDate: new Date().toISOString().slice(0, 10) } as Record<string, string> }
 
 export function GovernmentForms({ locale }: { locale: Locale }) {
   const ar = locale === "ar";
-  const [kind, setKind] = useState<FormKind>("transaction");
-  const [data, setData] = useState<FormData>(emptyForm);
-  const definition = formDefinitions[kind];
-  const issuedDate = "2026/08/18";
-  const formTitle = ar ? definition.titleAr : definition.titleEn;
-  const statusLabel = useMemo(() => ({ draft: ar ? "مسودة" : "Draft", ready: ar ? "جاهز" : "Ready", submitted: ar ? "تم التقديم" : "Submitted", completed: ar ? "مكتمل" : "Completed" })[data.status] ?? data.status, [ar, data.status]);
-  const field = <K extends keyof FormData>(key: K, value: FormData[K]) => setData((current) => ({ ...current, [key]: value }));
-  const input = "focus-ring mt-2 min-h-11 w-full border border-[#9b9b9b] bg-white px-3 text-sm text-black placeholder:text-black/30";
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<MinistryFormCategory | "all">("all");
+  const [selected, setSelected] = useState<MinistryForm>(ministryForms[0]);
+  const [values, setValues] = useState<Record<string, string>>(makeInitialValues);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const fields = useMemo(() => [...commonFields, ...categoryFields[selected.category], ...closingFields], [selected.category]);
+  const filteredForms = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase(locale);
+    return ministryForms.filter((form) => {
+      if (category !== "all" && form.category !== category) return false;
+      if (!needle) return true;
+      return `${form.titleAr} ${form.titleEn} ${ministryFormCategories[form.category].ar}`.toLocaleLowerCase(locale).includes(needle);
+    });
+  }, [category, locale, query]);
 
-  function switchKind(next: FormKind) {
-    setKind(next);
-    setData(emptyForm());
+  function selectForm(form: MinistryForm) {
+    setSelected(form); setValues(makeInitialValues());
+    window.setTimeout(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   }
 
-  return <section className="grid gap-6">
-    <div className="border border-white/10 bg-[#102a31] p-5 sm:p-7">
-      <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
-        <div><div className="flex items-center gap-2 text-xs font-bold text-[#ef4b4b]"><FileCheck2 size={17} />{ar ? "نظام الاستمارات الحكومية" : "GOVERNMENT FORM SYSTEM"}</div><h2 className="display mt-2 text-2xl sm:text-3xl">{ar ? "نماذج المكتب القانونية" : "Legal office forms"}</h2><p className="mt-2 max-w-3xl text-sm leading-7 text-white/50">{ar ? "قوالب داخلية قابلة للطباعة مبنية على قواعد الصفحات 49–53 من دليل هوية حكومة البحرين: عنوان موجز، رقم إصدار، تعليمات قصيرة، أقسام منطقية، وحقول صندوقية واضحة." : "Printable internal templates based on pages 49–53 of the Bahrain Government identity guide: concise title, issue number, short instructions, logical sections and clear boxed fields."}</p></div>
-        <div className="flex items-start gap-3 border border-amber-300/20 bg-amber-300/5 p-4 text-xs leading-6 text-amber-100/70"><ShieldAlert className="mt-0.5 shrink-0 text-amber-300" size={17} /><span>{ar ? "هذه نماذج داخلية للمكتب وليست محررات حكومية. لذلك لا يظهر شعار الدولة داخل النسخة المطبوعة." : "These are internal office forms, not government instruments. The state emblem is therefore not printed on them."}</span></div>
-      </div>
+  const formTitle = ar ? selected.titleAr : selected.titleEn;
+  const categoryTitle = ar ? ministryFormCategories[selected.category].ar : ministryFormCategories[selected.category].en;
+  const inputClass = "focus-ring mt-2 min-h-11 w-full border border-[#9b9b9b] bg-white px-3 text-sm text-black placeholder:text-black/35";
+
+  return <section className="grid gap-7">
+    <header className="border border-white/10 bg-[#102a31] p-5 sm:p-7"><div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
+      <div><div className="flex items-center gap-2 text-xs font-bold text-[#ef4b4b]"><FileCheck2 size={17} />{ar ? "مكتبة نماذج وزارة العدل" : "MINISTRY OF JUSTICE FORM LIBRARY"}</div><h2 className="display mt-2 text-2xl sm:text-3xl">{ar ? "الاستمارات والخدمات القضائية" : "Judicial forms and services"}</h2><p className="mt-2 max-w-3xl text-sm leading-7 text-white/55">{ar ? "اعرض النموذج المطلوب، املأ خاناته المخصصة، ثم اطبع نسخة مرتبة أو احفظها PDF. روابط الخدمات أدناه تفتح بوابة الحكومة الإلكترونية الرسمية." : "Open a form, complete its relevant fields, then print or save a clean PDF. The service links below open the official eGovernment portal."}</p></div>
+      <div className="flex items-center gap-3 border border-emerald-300/20 bg-emerald-300/5 p-4 text-xs leading-6 text-emerald-100/75"><ShieldCheck className="shrink-0 text-emerald-300" size={19} />{ar ? "الروابط والشعارات من صفحة خدمات وزارة العدل الرسمية." : "Links and service marks are from the official Ministry of Justice services page."}</div>
+    </div></header>
+
+    <section className="no-print"><div className="mb-4 flex items-end justify-between gap-4"><div><p className="text-xs font-bold text-[#d1b579]">{ar ? "الوصول السريع" : "QUICK ACCESS"}</p><h3 className="display mt-1 text-2xl">{ar ? "الخدمات القضائية الإلكترونية" : "Online judicial services"}</h3></div><span className="hidden text-xs text-white/40 sm:block">{ar ? "تفتح في نافذة جديدة" : "Opens in a new tab"}</span></div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{judicialServices.map((service) => <a key={service.id} href={service.href} target="_blank" rel="noreferrer" className="focus-ring group flex min-h-44 flex-col border border-white/10 bg-white/[.025] p-4 transition hover:-translate-y-0.5 hover:border-[#d1b579]/50 hover:bg-white/[.05]">
+        <div className="flex items-start justify-between gap-3"><span className="grid size-16 place-items-center bg-white p-2">
+          {/* eslint-disable-next-line @next/next/no-img-element -- exact artwork is hosted by the Ministry. */}
+          <img src={service.logo} alt="" className="size-12 object-contain" />
+        </span><ExternalLink size={16} className="text-white/30 transition group-hover:text-[#d1b579]" /></div>
+        <strong className="mt-4 text-sm leading-6">{ar ? service.titleAr : service.titleEn}</strong><p className="mt-1 text-xs leading-5 text-white/45">{ar ? service.descriptionAr : service.descriptionEn}</p>
+      </a>)}</div>
+    </section>
+
+    <section className="no-print border-t border-white/10 pt-7"><div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+      <div><p className="text-xs font-bold text-[#d1b579]">{ar ? "مكتبة الوزارة" : "MINISTRY LIBRARY"}</p><h3 className="display mt-1 text-2xl">{ar ? "اختر الاستمارة" : "Choose a form"}</h3><p className="mt-1 text-xs text-white/40">{ar ? `${ministryForms.length} نموذجًا ودليلًا مصنفًا` : `${ministryForms.length} categorised forms and guides`}</p></div>
+      <label className="relative block w-full lg:max-w-md"><Search className="pointer-events-none absolute start-4 top-1/2 -translate-y-1/2 text-white/35" size={17} /><span className="sr-only">{ar ? "بحث" : "Search"}</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={ar ? "ابحث باسم الاستمارة…" : "Search forms…"} className="focus-ring min-h-12 w-full border border-white/15 bg-black/20 pe-4 ps-11 text-sm text-white placeholder:text-white/35" /></label>
     </div>
+      <div className="mt-5 flex gap-2 overflow-x-auto pb-2"><FilterButton active={category === "all"} onClick={() => setCategory("all")}>{ar ? "الكل" : "All"}</FilterButton>{(Object.keys(ministryFormCategories) as MinistryFormCategory[]).map((id) => <FilterButton key={id} active={category === id} onClick={() => setCategory(id)}>{ar ? ministryFormCategories[id].ar : ministryFormCategories[id].en}</FilterButton>)}</div>
+      {filteredForms.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{filteredForms.map((form) => { const active = selected.id === form.id; return <button key={form.id} type="button" onClick={() => selectForm(form)} className={`focus-ring group flex min-h-32 flex-col items-start border p-4 text-start transition ${active ? "border-[#da291c] bg-[#da291c]/10" : "border-white/10 bg-white/[.025] hover:border-white/30"}`}><span className="flex w-full items-center justify-between gap-3 text-[10px] text-white/35"><span>{ar ? ministryFormCategories[form.category].ar : ministryFormCategories[form.category].en}</span><span dir="ltr">{form.size}</span></span><strong className="mt-3 text-sm leading-6 text-white/85">{ar ? form.titleAr : form.titleEn}</strong><span className={`mt-auto flex items-center gap-1 pt-3 text-xs font-bold ${active ? "text-[#ef4b4b]" : "text-[#d1b579]"}`}>{ar ? "عرض وتعبئة" : "Open and complete"}<ArrowUpLeft size={14} /></span></button> })}</div> : <div className="mt-4 border border-dashed border-white/15 p-8 text-center text-sm text-white/45">{ar ? "لا توجد استمارات مطابقة للبحث." : "No forms match your search."}</div>}
+    </section>
 
-    <div className="no-print grid gap-3 sm:grid-cols-3">{(Object.keys(formDefinitions) as FormKind[]).map((item) => { const entry = formDefinitions[item]; const active = item === kind; return <LiquidButton key={item} type="button" onClick={() => switchKind(item)} className={`focus-ring min-h-24 border p-4 text-start transition ${active ? "border-[#da291c] bg-[#da291c] text-white" : "border-white/10 bg-white/[.025] text-white/55 hover:border-white/25 hover:text-white"}`}><strong className="block text-sm">{ar ? entry.titleAr : entry.titleEn}</strong><span className={`mt-2 block text-[10px] ${active ? "text-white/70" : "text-white/30"}`} dir="ltr">{entry.number}</span></LiquidButton> })}</div>
-
-    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
-      <aside className="no-print h-fit border border-white/10 bg-white/[.025] p-5">
-        <h3 className="font-bold">{ar ? "تعبئة النموذج" : "Complete the form"}</h3><p className="mt-2 text-xs leading-6 text-white/40">{ar ? "البيانات تبقى في المتصفح حتى تغادر القسم. استخدم زر الطباعة لحفظ نسخة PDF." : "Data stays in the browser until you leave this section. Use Print to save a PDF copy."}</p>
-        <div className="mt-5 grid gap-4">
-          <label className="text-xs font-bold text-white/65">{ar ? "اسم الموكل" : "Client name"}<input value={data.clientName} onChange={(event) => field("clientName", event.target.value)} className={input} /></label>
-          <label className="text-xs font-bold text-white/65">{ar ? "الرقم الشخصي – اختياري" : "Personal number — optional"}<input value={data.personalNumber} onChange={(event) => field("personalNumber", event.target.value)} className={input} dir="ltr" inputMode="numeric" /></label>
-          <div className="grid grid-cols-2 gap-3"><label className="text-xs font-bold text-white/65">{ar ? "رقم القضية" : "Case number"}<input value={data.caseNumber} onChange={(event) => field("caseNumber", event.target.value)} className={input} dir="ltr" /></label><label className="text-xs font-bold text-white/65">{ar ? "السنة" : "Year"}<input value={data.caseYear} onChange={(event) => field("caseYear", event.target.value)} className={input} dir="ltr" inputMode="numeric" /></label></div>
-          <label className="text-xs font-bold text-white/65">{ar ? "المحكمة / الجهة" : "Court / authority"}<input value={data.court} onChange={(event) => field("court", event.target.value)} className={input} /></label>
-          <label className="text-xs font-bold text-white/65">{ar ? "الخصم / الطرف الآخر" : "Opponent / other party"}<input value={data.opponent} onChange={(event) => field("opponent", event.target.value)} className={input} /></label>
-          <div className="grid grid-cols-2 gap-3"><label className="text-xs font-bold text-white/65">{ar ? "تاريخ الطلب" : "Request date"}<input type="date" value={data.requestDate} onChange={(event) => field("requestDate", event.target.value)} className={input} dir="ltr" /></label><label className="text-xs font-bold text-white/65">{ar ? "رقم المرجع" : "Reference"}<input value={data.referenceNumber} onChange={(event) => field("referenceNumber", event.target.value)} className={input} dir="ltr" /></label></div>
-          <label className="text-xs font-bold text-white/65">{kind === "documents" ? ar ? "الغرض من المستندات" : "Document purpose" : ar ? "موضوع الطلب / الإجراء" : "Request / action subject"}<input value={data.subject} onChange={(event) => field("subject", event.target.value)} className={input} /></label>
-          <label className="text-xs font-bold text-white/65">{kind === "documents" ? ar ? "وصف المستندات وحالتها" : "Documents and condition" : ar ? "تفاصيل الإجراء" : "Action details"}<textarea value={data.details} onChange={(event) => field("details", event.target.value)} className={`${input} min-h-24 py-3`} /></label>
-          <label className="text-xs font-bold text-white/65">{ar ? "المرفقات – كل مستند في سطر" : "Attachments — one per line"}<textarea value={data.attachments} onChange={(event) => field("attachments", event.target.value)} className={`${input} min-h-20 py-3`} /></label>
-          <label className="text-xs font-bold text-white/65">{ar ? "الإجراء التالي" : "Next action"}<input value={data.nextAction} onChange={(event) => field("nextAction", event.target.value)} className={input} /></label>
-          <label className="text-xs font-bold text-white/65">{ar ? "الموعد / المهلة" : "Deadline"}<input type="date" value={data.deadline} onChange={(event) => field("deadline", event.target.value)} className={input} dir="ltr" /></label>
-          <div className="grid grid-cols-2 gap-3"><label className="text-xs font-bold text-white/65">{ar ? "أعدّه" : "Prepared by"}<input value={data.preparedBy} onChange={(event) => field("preparedBy", event.target.value)} className={input} /></label><label className="text-xs font-bold text-white/65">{ar ? "راجعه" : "Reviewed by"}<input value={data.reviewedBy} onChange={(event) => field("reviewedBy", event.target.value)} className={input} /></label></div>
-          <label className="text-xs font-bold text-white/65">{ar ? "الحالة" : "Status"}<select value={data.status} onChange={(event) => field("status", event.target.value)} className={input}><option value="draft">{ar ? "مسودة" : "Draft"}</option><option value="ready">{ar ? "جاهز" : "Ready"}</option><option value="submitted">{ar ? "تم التقديم" : "Submitted"}</option><option value="completed">{ar ? "مكتمل" : "Completed"}</option></select></label>
-        </div>
-        <div className="mt-6 grid grid-cols-2 gap-2"><LiquidButton type="button" onClick={() => window.print()} className="focus-ring flex min-h-12 items-center justify-center gap-2 bg-[#da291c] px-4 text-sm font-bold text-white"><Printer size={17} />{ar ? "طباعة / PDF" : "Print / PDF"}</LiquidButton><LiquidButton type="button" onClick={() => setData(emptyForm())} className="focus-ring flex min-h-12 items-center justify-center gap-2 border border-white/15 px-4 text-sm text-white/65 hover:text-white"><RotateCcw size={16} />{ar ? "تفريغ" : "Reset"}</LiquidButton></div>
+    <div ref={editorRef} className="scroll-mt-24 grid gap-6 border-t border-white/10 pt-7 xl:grid-cols-[380px_1fr]">
+      <aside className="no-print h-fit border border-white/10 bg-white/[.025] p-5"><div className="flex items-start gap-3"><Files className="mt-1 shrink-0 text-[#d1b579]" size={20} /><div><h3 className="font-bold leading-6">{formTitle}</h3><p className="mt-1 text-xs text-white/40">{categoryTitle}</p></div></div>
+        {selected.kind && selected.kind !== "form" && <div className="mt-4 flex gap-2 border border-sky-300/20 bg-sky-300/5 p-3 text-xs leading-5 text-sky-100/70"><CheckCircle2 className="mt-0.5 shrink-0 text-sky-300" size={16} />{ar ? "هذا المستند دليل أو قائمة تحقق؛ استخدم الخانات لتسجيل بيانات الملف والملاحظات قبل طباعته." : "This is a guide or checklist; use the fields to record file details and notes before printing."}</div>}
+        <div className="mt-5 grid gap-4">{fields.map((item) => <EditorField key={item.id} field={item} value={values[item.id] ?? ""} label={ar ? item.ar : item.en} inputClass={inputClass} onChange={(value) => setValues((current) => ({ ...current, [item.id]: value }))} />)}</div>
+        <div className="mt-6 grid grid-cols-2 gap-2"><LiquidButton type="button" onClick={() => window.print()} className="focus-ring flex min-h-12 items-center justify-center gap-2 bg-[#da291c] px-4 text-sm font-bold text-white"><Printer size={17} />{ar ? "طباعة / PDF" : "Print / PDF"}</LiquidButton><LiquidButton type="button" onClick={() => setValues(makeInitialValues())} className="focus-ring flex min-h-12 items-center justify-center gap-2 border border-white/15 px-4 text-sm text-white/65 hover:text-white"><RotateCcw size={16} />{ar ? "تفريغ" : "Reset"}</LiquidButton></div>
+        <p className="mt-4 text-[10px] leading-5 text-white/35">{ar ? "تبقى البيانات داخل هذه الصفحة ولا تُرسل إلى أي جهة. راجع النموذج الحكومي الأصلي قبل التقديم الرسمي." : "Data remains on this page and is not sent anywhere. Check the original government form before formal submission."}</p>
       </aside>
-
-      <article className="government-form-print mx-auto w-full max-w-[850px] bg-white text-black shadow-2xl shadow-black/20">
-        <div className="h-2 bg-[#da291c]" />
-        <div className="p-6 sm:p-9">
-          <header className="relative border-b border-black pb-6 text-center"><Image src="/assets/brand/logo-icon.svg" width={64} height={64} alt={ar ? "شعار مكتب عبدالرحمن المودة" : "Abdulrahman Almawdah office mark"} className="mx-auto h-14 w-auto" /><p className="mt-3 text-[10px] font-bold tracking-[.08em] text-[#636466]">{ar ? "مكتب عبدالرحمن المودة للمحاماة والاستشارات القانونية" : "ABDULRAHMAN ALMAWDAH LAW OFFICE"}</p><h1 className="mt-3 text-xl font-bold">{formTitle}</h1><p className="mt-1 text-[10px] text-[#636466]">{ar ? definition.titleEn : definition.titleAr}</p><div className="mt-5 grid grid-cols-2 border border-black text-start text-[10px] sm:absolute sm:start-0 sm:top-0 sm:mt-0 sm:w-44"><span className="border-e border-black p-2">{ar ? "رقم النموذج" : "Form no."}<strong className="mt-1 block" dir="ltr">{definition.number}</strong></span><span className="p-2">{ar ? "الإصدار" : "Issued"}<strong className="mt-1 block" dir="ltr">{issuedDate}</strong></span></div></header>
-
-          <section className="mt-5 border border-[#636466]"><h2 className="bg-[#636466] px-3 py-2 text-xs font-bold text-white">{ar ? "تعليمات الاستخدام" : "Instructions"}</h2><div className="flex gap-2 p-3 text-[10px] leading-5"><Info className="mt-0.5 shrink-0 text-[#da291c]" size={14} /><p>{ar ? definition.instructionAr : definition.instructionEn} {ar ? "تأكد من صحة البيانات، ولا ترفق أصلًا وحيدًا دون تسجيله." : "Verify all data and never attach a sole original without recording it."}</p></div></section>
-
-          <FormSection title={ar ? "بيانات الموكل والقضية" : "Client and case details"}>
-            <PrintField label={ar ? "اسم الموكل" : "Client name"} value={data.clientName} wide />
-            <PrintField label={ar ? "الرقم الشخصي" : "Personal number"} value={data.personalNumber} ltr />
-            <PrintField label={ar ? "رقم القضية / السنة" : "Case no. / year"} value={[data.caseNumber, data.caseYear].filter(Boolean).join(" / ")} ltr />
-            <PrintField label={ar ? "المحكمة / الجهة" : "Court / authority"} value={data.court} />
-            <PrintField label={ar ? "الخصم / الطرف الآخر" : "Opponent / other party"} value={data.opponent} />
-          </FormSection>
-
-          <FormSection title={ar ? "بيانات الطلب" : "Request details"}>
-            <PrintField label={ar ? "تاريخ الطلب" : "Request date"} value={displayDate(data.requestDate, ar)} ltr />
-            <PrintField label={ar ? "رقم المرجع" : "Reference number"} value={data.referenceNumber} ltr />
-            <PrintField label={ar ? "الموضوع" : "Subject"} value={data.subject} wide />
-            <PrintField label={kind === "documents" ? ar ? "وصف المستندات وحالتها" : "Documents and condition" : ar ? "تفاصيل الإجراء" : "Action details"} value={data.details} wide multiline />
-            <PrintField label={ar ? "المرفقات" : "Attachments"} value={data.attachments} wide multiline />
-          </FormSection>
-
-          <FormSection title={ar ? "المتابعة والاعتماد" : "Follow-up and approval"}>
-            <PrintField label={ar ? "الإجراء التالي" : "Next action"} value={data.nextAction} wide />
-            <PrintField label={ar ? "الموعد / المهلة" : "Deadline"} value={displayDate(data.deadline, ar)} ltr />
-            <PrintField label={ar ? "الحالة" : "Status"} value={statusLabel} />
-            <PrintField label={ar ? "أعدّه" : "Prepared by"} value={data.preparedBy} />
-            <PrintField label={ar ? "راجعه" : "Reviewed by"} value={data.reviewedBy} />
-          </FormSection>
-
-          <div className="mt-5 grid grid-cols-2 gap-4"><div className="min-h-20 border border-[#636466] p-3 text-[10px] text-[#636466]">{ar ? "توقيع المُعد" : "Prepared by signature"}</div><div className="min-h-20 border border-[#636466] p-3 text-[10px] text-[#636466]">{ar ? "توقيع المراجع" : "Reviewer signature"}</div></div>
-          <footer className="mt-6 flex items-center justify-between border-t border-[#636466] pt-3 text-[8px] text-[#636466]"><span>{ar ? "للاستخدام الداخلي فقط — ليس مستندًا حكوميًا" : "Internal use only — not a government document"}</span><span dir="ltr">{definition.number} · {issuedDate}</span></footer>
-        </div>
-      </article>
+      <FormPreview ar={ar} form={selected} fields={fields} values={values} />
     </div>
-  </section>;
+  </section>
 }
 
-function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="mt-5 border border-[#636466]"><h2 className="bg-[#636466] px-3 py-2 text-xs font-bold text-white">{title}</h2><div className="grid grid-cols-2">{children}</div></section>;
+function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) { return <button type="button" onClick={onClick} className={`focus-ring min-h-10 shrink-0 border px-4 text-xs font-bold transition ${active ? "border-[#771111] bg-[#771111] text-white" : "border-white/10 text-white/50 hover:border-white/25 hover:text-white"}`}>{children}</button> }
+
+function EditorField({ field, value, label, inputClass, onChange }: { field: Field; value: string; label: string; inputClass: string; onChange: (value: string) => void }) {
+  const content = field.type === "textarea" ? <textarea value={value} required={field.required} onChange={(event) => onChange(event.target.value)} className={`${inputClass} min-h-24 py-3`} /> : <input value={value} required={field.required} type={field.type ?? "text"} onChange={(event) => onChange(event.target.value)} className={inputClass} dir={["number", "tel", "email"].includes(field.type ?? "") ? "ltr" : undefined} />;
+  return <label className="text-xs font-bold text-white/65">{label}{field.required && <span className="ms-1 text-[#ef4b4b]">*</span>}{content}</label>
 }
 
-function PrintField({ label, value, wide, ltr, multiline }: { label: string; value: string; wide?: boolean; ltr?: boolean; multiline?: boolean }) {
-  return <div className={`border-b border-e border-[#b3b3b3] p-3 ${wide ? "col-span-2" : ""} ${multiline ? "min-h-24" : "min-h-16"}`}><span className="block text-[9px] text-[#636466]">{label}</span><strong className="mt-1 block whitespace-pre-wrap text-[11px] font-normal leading-5" dir={ltr ? "ltr" : undefined}>{value || "—"}</strong></div>;
+function FormPreview({ ar, form, fields, values }: { ar: boolean; form: MinistryForm; fields: Field[]; values: Record<string, string> }) {
+  return <article className="government-form-print mx-auto w-full max-w-[850px] bg-white text-black shadow-2xl shadow-black/20" dir={ar ? "rtl" : "ltr"}><div className="h-2 bg-[#da291c]" /><div className="p-6 sm:p-9">
+    <header className="relative border-b border-black pb-6 text-center"><Image src="/assets/brand/logo-icon.svg" width={64} height={64} alt="" className="mx-auto h-14 w-auto" /><p className="mt-3 text-[10px] font-bold tracking-[.06em] text-[#636466]">{ar ? "مكتب عبدالرحمن المودة للمحاماة والاستشارات القانونية" : "ABDULRAHMAN ALMAWDAH LAW OFFICE"}</p><h1 className="mx-auto mt-3 max-w-xl text-xl font-bold">{ar ? form.titleAr : form.titleEn}</h1><p className="mt-2 text-[10px] text-[#636466]">{ar ? ministryFormCategories[form.category].ar : ministryFormCategories[form.category].en}</p><div className="mt-5 grid grid-cols-2 border border-black text-start text-[10px] sm:absolute sm:start-0 sm:top-0 sm:mt-0 sm:w-48"><span className="border-e border-black p-2">{ar ? "رمز النموذج" : "Form code"}<strong className="mt-1 block" dir="ltr">MOJ-{form.id.toUpperCase().slice(0, 12)}</strong></span><span className="p-2">{ar ? "حجم الأصل" : "Source size"}<strong className="mt-1 block" dir="ltr">{form.size ?? "—"}</strong></span></div></header>
+    <div className="mt-5 border border-[#636466] bg-[#f3f3f3] p-3 text-[10px] leading-5 text-[#363636]">{ar ? "نسخة عمل قابلة للتعبئة أعدها المكتب لتجميع البيانات. لا تُعد بديلًا عن النموذج الحكومي الأصلي ولا تحمل صفة محرر رسمي." : "A fillable working copy prepared by the office to collect information. It does not replace the original government form and is not an official instrument."}</div>
+    <section className="mt-5 grid grid-cols-2 border-s border-t border-[#636466]">{fields.map((field) => <div key={field.id} className={`${field.wide ? "col-span-2" : ""} min-h-16 border-b border-e border-[#636466] p-3 ${field.type === "textarea" ? "min-h-24" : ""}`}><p className="text-[9px] font-bold text-[#636466]">{ar ? field.ar : field.en}{field.required ? " *" : ""}</p><p className="mt-2 whitespace-pre-wrap text-xs leading-5">{values[field.id] || " "}</p></div>)}</section>
+    <footer className="mt-6 grid grid-cols-2 gap-4 text-[10px] text-[#636466]"><div className="min-h-20 border border-[#636466] p-3">{ar ? "توقيع مقدم الطلب" : "Applicant signature"}</div><div className="min-h-20 border border-[#636466] p-3">{ar ? "مراجعة المكتب وتاريخها" : "Office review and date"}</div></footer>
+  </div></article>
 }
