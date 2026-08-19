@@ -335,6 +335,30 @@ textarea {
 .admin-shell button.bg-\[\#da291c\],
 .admin-shell button.bg-\[\#771111\] { color: #fff !important; }
 .admin-shell button.bg-\[\#da291c\] [class*="text-white"] { color: rgba(255, 255, 255, 0.78) !important; }
+.admin-shell .roadmap-nav-active,
+.light .admin-shell .roadmap-nav-active {
+  background-color: #090909 !important;
+  border-color: rgba(119, 17, 17, 0.82) !important;
+  color: #fff !important;
+}
+.admin-shell .roadmap-nav-active .roadmap-nav-title { color: #fff !important; }
+.admin-shell .roadmap-nav-active .roadmap-nav-audience {
+  color: #d7e3e5 !important;
+  opacity: 1 !important;
+}
+.admin-shell .roadmap-nav-active .roadmap-nav-index {
+  background-color: #771111 !important;
+  color: #fff !important;
+}
+.admin-shell .roadmap-nav-active .roadmap-nav-arrow {
+  color: #ef4444 !important;
+  opacity: 1 !important;
+}
+.light .admin-shell .roadmap-nav-item:not(.roadmap-nav-active) .roadmap-nav-title { color: #4a4138; }
+.light .admin-shell .roadmap-nav-item:not(.roadmap-nav-active) .roadmap-nav-audience {
+  color: #81766c;
+  opacity: 1;
+}
 .admin-overview-logo-light { display: none; }
 .light .admin-shell .admin-overview-logo-light { display: block; }
 .light .admin-shell .admin-overview-logo-dark { display: none; }
