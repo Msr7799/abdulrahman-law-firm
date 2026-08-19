@@ -1,0 +1,180 @@
+import Image from "next/image";
+import {
+  ArrowUpLeft,
+  BookOpenCheck,
+  BriefcaseBusiness,
+  Bot,
+  ExternalLink,
+  Landmark,
+  FileCheck2,
+  Phone,
+  PhoneCall,
+  Route,
+} from "lucide-react";
+import type { Locale } from "@/config/site";
+import { LegalNewsOverview } from "@/components/admin/legal-news-overview";
+import {
+  dashboardGuide,
+  importantLawyerContacts,
+} from "@/data/judicial-roadmap";
+
+const icons = {
+  integrations: Landmark,
+  roadmap: Route,
+  forms: FileCheck2,
+  cases: BriefcaseBusiness,
+  directory: PhoneCall,
+  agent: Bot,
+};
+
+export function DashboardOverview({
+  locale,
+  onOpen,
+}: {
+  locale: Locale;
+  onOpen: (id: "integrations" | "roadmap" | "forms" | "cases" | "directory" | "agent") => void;
+}) {
+  const ar = locale === "ar";
+  return (
+    <section className="grid gap-6">
+      <div className="relative overflow-hidden border border-white/10 bg-[#102a31] p-6 sm:p-8">
+        <div className="absolute -end-16 -top-16 size-64 rounded-full bg-[#b89555]/10 blur-3xl" />
+        <div className="relative flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-bold text-[#d0ad69]">
+              <BookOpenCheck size={17} />
+              {ar ? "دليل مساحة العمل" : "WORKSPACE GUIDE"}
+            </div>
+            <h2 className="display mt-3 text-2xl sm:text-3xl">
+              {ar ? "من أين تبدأ؟" : "Where should you start?"}
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm leading-7 text-white/50">
+              {ar
+                ? "ابدأ بخارطة القضاء لتحديد المعاملة، ثم أدر ملف القضية، واحفظ الجهات المهمة، واستعن بالوكيل القانوني للبحث والشرح."
+                : "Start with the judicial roadmap, manage the case file, keep important contacts, and use the legal agent for research and explanations."}
+            </p>
+          </div>
+          <div className="flex min-h-64 min-w-0 w-full items-center justify-center p-1 sm:min-h-80 lg:w-auto lg:min-w-[26rem]">
+            <Image
+              src="/assets/logos/bahrain-ministry4justice-nobg-dark.svg"
+              width={560}
+              height={598}
+              alt={
+                ar
+                  ? "وزارة العدل والشؤون الإسلامية والأوقاف"
+                  : "Ministry of Justice"
+              }
+              className="admin-overview-logo-light h-60 w-auto max-w-full object-contain sm:h-80"
+            />
+            <Image
+              src="/assets/logos/bahrain-ministry4justice-nobg-light.svg"
+              width={560}
+              height={598}
+              alt={
+                ar
+                  ? "وزارة العدل والشؤون الإسلامية والأوقاف"
+                  : "Ministry of Justice"
+              }
+              className="admin-overview-logo-dark h-60 w-auto max-w-full object-contain sm:h-80"
+            />
+          </div>
+        </div>
+      </div>
+
+      <LegalNewsOverview locale={locale} />
+
+      <div>
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold text-[#d0ad69]">
+              {ar ? "أقسام النظام" : "SYSTEM SECTIONS"}
+            </p>
+            <h2 className="display mt-2 text-2xl">
+              {ar
+                ? "استخدم كل قسم في وقته"
+                : "Use each section at the right time"}
+            </h2>
+          </div>
+          <span className="text-xs text-white/30">
+            6 {ar ? "أقسام تشغيلية" : "work areas"}
+          </span>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+          {dashboardGuide.map((item, index) => {
+            const Icon = icons[item.id];
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onOpen(item.id)}
+                className="focus-ring group h-auto min-h-52 flex-col items-stretch justify-start whitespace-normal border border-white/10 bg-white/[.025] p-5 text-start transition hover:-translate-y-1 hover:border-[#b89555]/45 hover:bg-white/[.045]"
+              >
+                <div className="flex w-full items-center justify-between">
+                  <span className="grid size-11 place-items-center bg-[#b89555]/10 text-[#d0ad69]">
+                    <Icon size={21} />
+                  </span>
+                  <span className="text-[10px] font-black text-white/20">
+                    0{index + 1}
+                  </span>
+                </div>
+                <h3 className="mt-5 w-full font-bold">
+                  {ar ? item.titleAr : item.titleEn}
+                </h3>
+                <p className="mt-2 w-full text-xs leading-6 text-white/45">
+                  {ar ? item.descriptionAr : item.descriptionEn}
+                </p>
+                <span className="mt-4 flex w-full items-center gap-1 text-[10px] font-bold text-[#d0ad69] opacity-0 transition group-hover:opacity-100">
+                  {ar ? "فتح القسم" : "OPEN SECTION"}
+                  {ar ? <ArrowUpLeft size={13} /> : <ExternalLink size={13} />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="border border-white/10 bg-[#0c1c21]">
+        <div className="flex flex-col justify-between gap-3 border-b border-white/10 p-5 sm:flex-row sm:items-center">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-bold text-[#d0ad69]">
+              <Phone size={16} />
+              {ar ? "وصول سريع" : "QUICK ACCESS"}
+            </div>
+            <h2 className="display mt-2 text-2xl">
+              {ar ? "أرقام مهمة للمحامي" : "Important numbers for lawyers"}
+            </h2>
+          </div>
+          <p className="max-w-md text-xs leading-6 text-white/40">
+            {ar
+              ? "اضغط على الرقم للاتصال. يُفضّل التحقق من الجهة الرسمية قبل مشاركة أي بيانات عن الموكل."
+              : "Tap a number to call. Verify the official recipient before sharing any client information."}
+          </p>
+        </div>
+        <div className="grid md:grid-cols-2 xl:grid-cols-3">
+          {importantLawyerContacts.map((contact) => (
+            <a
+              key={contact.phone}
+              href={`tel:${contact.phone.replace(/\s/g, "")}`}
+              className="focus-ring group flex min-h-28 items-center justify-between gap-4 border-b border-white/8 p-5 transition hover:bg-white/[.035] md:border-e xl:[&:nth-child(3n)]:border-e-0"
+            >
+              <span>
+                <strong className="block text-sm">
+                  {ar ? contact.nameAr : contact.nameEn}
+                </strong>
+                <small className="mt-2 block text-xs text-white/40">
+                  {ar ? contact.noteAr : contact.noteEn}
+                </small>
+              </span>
+              <span
+                dir="ltr"
+                className="shrink-0 text-lg font-black tracking-wide text-[#d0ad69] group-hover:text-white"
+              >
+                {contact.phone}
+              </span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}

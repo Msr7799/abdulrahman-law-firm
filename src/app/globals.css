@@ -242,21 +242,21 @@ textarea {
   background-size: 42px 42px, 42px 42px, auto;
 }
 
-/* Admin themes: charcoal/black + Bahrain red at night, warm off-white by day. */
+/* Admin themes: neutral black/graphite at night, warm off-white by day. */
 .dark .admin-shell {
-  color: #f7f2eb;
-  background-color: #080808 !important;
-  background-image:
-    radial-gradient(circle at 12% 8%, rgba(119, 17, 17, 0.2), transparent 30rem),
-    radial-gradient(circle at 88% 80%, rgba(75, 8, 8, 0.13), transparent 34rem),
-    linear-gradient(145deg, #070707 0%, #111010 52%, #190d10 100%);
+  color: #f5f5f5;
+  background-color: #050505 !important;
+  background-image: linear-gradient(145deg, #050505 0%, #090909 48%, #0f0f0f 100%);
   background-size: auto;
 }
-.dark .admin-shell [class*="bg-[#102a31]"] { background-color: #181613 !important; }
-.dark .admin-shell .bg-\[\#0c1c21\] { background-color: #0e0e0e !important; }
-.dark .admin-shell .bg-\[\#0a252c\] { background-color: #17120d !important; }
-.dark .admin-shell .bg-\[\#101d21\] { background-color: #151515 !important; }
-.dark .admin-shell .bg-\[\#132b32\] { background-color: #1d1915 !important; }
+.dark .admin-shell [class*="bg-[#102a31]"] { background-color: #111111 !important; }
+.dark .admin-shell .bg-\[\#0c1c21\] { background-color: #0b0b0b !important; }
+.dark .admin-shell .bg-\[\#0a252c\] { background-color: #0d0d0d !important; }
+.dark .admin-shell .bg-\[\#101d21\] { background-color: #121212 !important; }
+.dark .admin-shell .bg-\[\#132b32\] { background-color: #161616 !important; }
+.dark .admin-shell [class*="bg-[#0a171b]"] { background-color: rgba(8, 8, 8, 0.97) !important; }
+.dark .admin-shell [class*="bg-[#0b171b]"] { background-color: rgba(10, 10, 10, 0.98) !important; }
+.dark .admin-shell [class*="bg-black/"] { background-color: rgba(0, 0, 0, 0.32) !important; }
 .dark .admin-shell [class*="bg-[#b89555]"] { background-color: rgba(119, 17, 17, 0.16) !important; }
 .dark .admin-shell .bg-\[\#b89555\],
 .dark .admin-shell .bg-\[\#d0ad69\],
@@ -552,4 +552,365 @@ textarea {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Legal agent: ChatUI-like workspace + explicit light-theme contrast fixes. */
+[data-legal-agent-root="true"] {
+  --agent-panel: #0e0e0e;
+  --agent-panel-soft: #121212;
+  --agent-border: rgba(255, 255, 255, 0.09);
+}
+.dark [data-legal-agent-root="true"] .legal-agent-topbar,
+.dark [data-legal-agent-root="true"] .legal-agent-composer {
+  background: rgba(14, 14, 14, 0.97) !important;
+}
+.dark [data-legal-agent-root="true"] .legal-agent-main {
+  background: #0e0e0e !important;
+}
+.dark [data-legal-agent-root="true"] .legal-agent-sidebar {
+  background: #0b0b0b !important;
+}
+
+.light .admin-shell .bg-\[\#0a171b\],
+.light .admin-shell .bg-\[\#0b171b\] {
+  background-color: #fffdf9 !important;
+}
+.light .admin-shell [class*="bg-[#0a171b]"] { background-color: rgba(255, 253, 249, 0.97) !important; }
+.light .admin-shell [class*="bg-[#0b171b]"] { background-color: rgba(255, 253, 249, 0.98) !important; }
+.light .admin-shell [data-legal-agent-root="true"] {
+  background: #fbfaf8 !important;
+  color: #211d19;
+  --agent-border: rgba(58, 46, 37, 0.12);
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-main,
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-topbar,
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-composer {
+  background: #fbfaf8 !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-topbar {
+  border-color: rgba(58, 46, 37, 0.12) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-sidebar {
+  background: #f4f1ec !important;
+  border-color: rgba(58, 46, 37, 0.12) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/20"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/25"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/28"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/30"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/35"] {
+  color: rgba(42, 35, 29, 0.58) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/40"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/42"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/45"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/50"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/55"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/60"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/65"] {
+  color: rgba(34, 29, 24, 0.76) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/70"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/75"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/80"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/85"],
+.light .admin-shell [data-legal-agent-root="true"] [class*="text-white/90"] {
+  color: rgba(28, 24, 20, 0.9) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .text-white {
+  color: #201c18 !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] [class*="placeholder:text-white"]::placeholder {
+  color: rgba(47, 40, 34, 0.42) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-input {
+  background: #ffffff !important;
+  border-color: rgba(58, 46, 37, 0.18) !important;
+  box-shadow: 0 8px 30px rgba(67, 49, 34, 0.08) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-input:focus-within {
+  border-color: rgba(119, 17, 17, 0.42) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-empty > span {
+  background: #fff !important;
+  border-color: rgba(58, 46, 37, 0.14) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] button.bg-\[\#b89555\] {
+  color: #fff !important;
+  background: #771111 !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] article.bg-\[\#b89555\] {
+  background: #771111 !important;
+  color: #fff !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] article.bg-\[\#b89555\] * {
+  color: inherit;
+}
+
+@media (max-width: 1279px) {
+  [data-legal-agent-root="true"] .legal-agent-sidebar {
+    max-width: 21rem;
+  }
+}
+@media (max-width: 640px) {
+  [data-legal-agent-root="true"] .legal-agent-messages {
+    padding-inline: .65rem;
+  }
+  [data-legal-agent-root="true"] .legal-agent-empty {
+    min-height: 16rem;
+  }
+  [data-legal-agent-root="true"] .legal-agent-input {
+    border-radius: 1.2rem;
+  }
+}
+
+
+[data-legal-agent-root="true"].legal-agent-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+[data-legal-agent-root="true"] .legal-agent-main {
+  min-width: 0;
+}
+[data-legal-agent-root="true"] .legal-agent-sidebar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(184,149,85,.35) transparent;
+}
+[data-legal-agent-root="true"] .legal-agent-sidebar::-webkit-scrollbar,
+[data-legal-agent-root="true"] .legal-agent-messages::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+[data-legal-agent-root="true"] .legal-agent-sidebar::-webkit-scrollbar-thumb,
+[data-legal-agent-root="true"] .legal-agent-messages::-webkit-scrollbar-thumb {
+  background: rgba(184,149,85,.24);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+[data-legal-agent-root="true"] .legal-agent-topbar,
+[data-legal-agent-root="true"] .legal-agent-composer,
+[data-legal-agent-root="true"] .legal-agent-sidebar {
+  backdrop-filter: blur(16px);
+}
+@media (min-width: 1280px) {
+  [data-legal-agent-root="true"].legal-agent-layout {
+    grid-template-columns: minmax(0, 1fr) var(--legal-agent-sidebar-width, 21rem);
+  }
+}
+.light .admin-shell [data-legal-agent-root="true"] {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.55);
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-sidebar {
+  background: linear-gradient(180deg, rgba(255,255,255,.9), rgba(244,241,236,.95)) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-messages {
+  background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,0));
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-input textarea,
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-input input,
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-input select {
+  color: #231d18 !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-input textarea::placeholder {
+  color: rgba(56, 45, 36, 0.45) !important;
+}
+
+
+/* Final admin dark palette: black and graphite only, with red/gold reserved for accents. */
+.dark .admin-shell .admin-switcher-menu {
+  background: rgba(9, 9, 9, 0.98) !important;
+  border-color: rgba(255,255,255,.09) !important;
+}
+.dark .admin-shell .admin-switcher-item:not([data-highlighted]) {
+  background-color: transparent;
+}
+.dark .admin-shell [data-legal-agent-root="true"] {
+  background: #080808 !important;
+}
+.dark .admin-shell [data-legal-agent-root="true"] .legal-agent-main {
+  background: #090909 !important;
+}
+.dark .admin-shell [data-legal-agent-root="true"] .legal-agent-topbar,
+.dark .admin-shell [data-legal-agent-root="true"] .legal-agent-composer {
+  background: rgba(10,10,10,.97) !important;
+}
+.dark .admin-shell [data-legal-agent-root="true"] .legal-agent-sidebar {
+  background: #070707 !important;
+}
+.dark .admin-shell [data-legal-agent-root="true"] .legal-agent-input {
+  background: #151515 !important;
+  border-color: rgba(255,255,255,.11) !important;
+  box-shadow: 0 12px 40px rgba(0,0,0,.34) !important;
+}
+.dark .admin-shell [data-legal-agent-root="true"] .legal-agent-input:focus-within {
+  background: #181818 !important;
+  border-color: rgba(185,87,87,.55) !important;
+}
+
+/* Theme-aware admin section dropdown. Radix renders the menu in a portal,
+   so these selectors intentionally do not depend on .admin-shell ancestry. */
+.dark .admin-switcher-menu {
+  background: rgba(8, 8, 8, 0.985) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+  color: rgba(255, 255, 255, 0.90) !important;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52) !important;
+}
+.dark .admin-switcher-menu .admin-switcher-item {
+  color: rgba(255, 255, 255, 0.68) !important;
+}
+.dark .admin-switcher-menu .admin-switcher-item[data-highlighted="true"],
+.dark .admin-switcher-menu .admin-switcher-item[data-highlighted] {
+  background: rgba(255, 255, 255, 0.055) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+  color: #fff !important;
+}
+.dark .admin-switcher-menu .admin-switcher-item[data-active="true"] {
+  background: rgba(184, 149, 85, 0.12) !important;
+  border-color: rgba(184, 149, 85, 0.40) !important;
+  color: #ead39f !important;
+}
+.dark .admin-switcher-menu .admin-switcher-icon {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+.dark .admin-switcher-menu .admin-switcher-item[data-active="true"] .admin-switcher-icon {
+  background: rgba(184, 149, 85, 0.15) !important;
+  color: #d9bb78 !important;
+}
+
+.light .admin-switcher-menu {
+  background: rgba(255, 253, 248, 0.99) !important;
+  border-color: rgba(75, 55, 38, 0.16) !important;
+  color: #302a24 !important;
+  box-shadow: 0 24px 70px rgba(69, 49, 34, 0.18) !important;
+}
+.light .admin-switcher-menu .text-white,
+.light .admin-switcher-menu [class*="text-white/"] {
+  color: #302a24 !important;
+}
+.light .admin-switcher-menu .admin-switcher-item {
+  color: rgba(48, 42, 36, 0.74) !important;
+}
+.light .admin-switcher-menu .admin-switcher-item[data-highlighted="true"],
+.light .admin-switcher-menu .admin-switcher-item[data-highlighted] {
+  background: rgba(119, 17, 17, 0.055) !important;
+  border-color: rgba(119, 17, 17, 0.14) !important;
+  color: #302a24 !important;
+}
+.light .admin-switcher-menu .admin-switcher-item[data-active="true"] {
+  background: rgba(184, 149, 85, 0.13) !important;
+  border-color: rgba(119, 17, 17, 0.24) !important;
+  color: #6a4b16 !important;
+}
+.light .admin-switcher-menu .admin-switcher-icon {
+  background: rgba(75, 55, 38, 0.055) !important;
+  color: rgba(48, 42, 36, 0.58) !important;
+}
+.light .admin-switcher-menu .admin-switcher-item[data-active="true"] .admin-switcher-icon {
+  background: rgba(184, 149, 85, 0.16) !important;
+  color: #771111 !important;
+}
+
+/* Compact button geometry across the whole site: no pill/circle buttons. */
+button,
+[role="button"] {
+  border-radius: 0.375rem !important; /* rounded-md */
+}
+button[data-slot="dropdown-menu-trigger"],
+button[data-slot="select-trigger"],
+[role="menuitem"],
+[role="option"] {
+  border-radius: 0.375rem !important;
+}
+
+/* v5: consistent compact rounding for real interactive controls and button-like links. */
+.action-button,
+a.focus-ring[class*="min-h-"],
+button,
+[role="button"],
+[role="menuitem"],
+[role="option"],
+[data-slot="dropdown-menu-trigger"],
+[data-slot="select-trigger"] {
+  border-radius: 0.375rem !important;
+}
+
+/* Keep branded floating/status circles circular; they are not standard site buttons. */
+.whatsapp-float,
+.whatsapp-float > span,
+.admin-status-dot,
+.admin-status-ping {
+  border-radius: 9999px !important;
+}
+
+/* Light admin contrast fixes for the exact pale elements flagged in review. */
+.light .admin-shell .admin-demo-badge {
+  color: #6f4d00 !important;
+  background: #fff4cf !important;
+  border-color: #d6ad3a !important;
+}
+.light .admin-shell .admin-support-title {
+  color: #6a4510 !important;
+}
+.light .admin-shell .admin-integration-warning {
+  color: #6c4500 !important;
+  background: #fff7dc !important;
+  border-color: #dfbd59 !important;
+}
+.light .admin-shell .integration-status-available {
+  color: #075f3a !important;
+  background: #e7f8ef !important;
+  border-color: #79c79e !important;
+}
+.light .admin-shell .integration-status-official {
+  color: #075985 !important;
+  background: #eaf7ff !important;
+  border-color: #7cc5e8 !important;
+}
+.light .admin-shell .integration-status-onboarding {
+  color: #6f4d00 !important;
+  background: #fff4cf !important;
+  border-color: #d6ad3a !important;
+}
+.light .admin-shell .admin-news-stat {
+  color: #8a5b00 !important;
+}
+.light .admin-shell .admin-news-category {
+  color: #6a4510 !important;
+  background: #fff5dc !important;
+  border-color: #caa45d !important;
+}
+.light .admin-shell .admin-news-priority {
+  color: #7a4c00 !important;
+}
+.light .admin-shell .admin-news-image {
+  border-color: rgba(75,55,38,.16) !important;
+  background: #efe8dc !important;
+}
+
+/* v6: high-contrast integration summary cards in light mode. */
+.light .admin-shell .admin-integration-stat {
+  box-shadow: inset 0 0 0 1px rgba(55, 42, 31, 0.04);
+}
+.light .admin-shell .admin-integration-stat-available {
+  background: #eefaf3 !important;
+  border-color: #62b98a !important;
+}
+.light .admin-shell .admin-integration-stat-onboarding {
+  background: #fff7df !important;
+  border-color: #d5aa34 !important;
+}
+.light .admin-shell .admin-integration-stat-value {
+  color: #201a16 !important;
+  font-weight: 800 !important;
+}
+.light .admin-shell .admin-integration-stat-label {
+  color: #4f4439 !important;
+  opacity: 1 !important;
+  font-weight: 700 !important;
+}
+.light .admin-shell .admin-integration-stat-available .admin-integration-stat-icon {
+  color: #087447 !important;
+}
+.light .admin-shell .admin-integration-stat-onboarding .admin-integration-stat-icon {
+  color: #8a5a00 !important;
 }

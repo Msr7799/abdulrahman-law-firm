@@ -10,7 +10,7 @@ import {
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  "relative inline-flex items-center justify-center gap-2 overflow-hidden text-sm font-medium transition-[box-shadow,_color,_border-color,_outline-color,_text-decoration-color,_fill,_stroke] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 outline-none focus-visible:ring-3 focus-visible:ring-[#c7a96f]/50 [--liquid-button-color:#000] hover:text-white",
+  "relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-md text-sm font-medium transition-[box-shadow,_color,_border-color,_outline-color,_text-decoration-color,_fill,_stroke] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 outline-none focus-visible:ring-3 focus-visible:ring-[#c7a96f]/50 [--liquid-button-color:#000] hover:text-white",
   {
     variants: {
       variant: {

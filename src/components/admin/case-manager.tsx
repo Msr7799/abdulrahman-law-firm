@@ -9,6 +9,7 @@ import { Archive, CalendarDays, Download, FilePlus2, Import, LoaderCircle, Penci
 import type { Locale } from "@/config/site";
 import { demoCases } from "@/data/admin-seed";
 import { rankCases } from "@/lib/case-search";
+import { resolveCaseLogos } from "@/lib/bahrain-logo-match";
 import { firestore, realtimeDatabase } from "@/lib/firebase/client";
 import type { CaseDraft, CaseStatus, LawCase } from "@/types/admin";
 import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
@@ -17,6 +18,25 @@ import { SelectDropdown } from "@/components/ui/dropdown-menu";
 const emptyDraft: CaseDraft = { caseNumber: "", caseYear: new Date().getFullYear(), caseType: "مدني", clientName: "", accusedName: "", victimName: "", court: "", status: "new", judgment: "", judgeName: "", notes: "", nextHearing: "", isDemo: false };
 const statuses: CaseStatus[] = ["new", "active", "hearing", "judgment", "execution", "closed"];
 const statusLabels: Record<CaseStatus, string> = { new: "جديدة", active: "نشطة", hearing: "جلسات", judgment: "صدر حكم", execution: "تنفيذ", closed: "مغلقة" };
+
+
+function CaseLogoCluster({ item, ar }: { item: LawCase; ar: boolean }) {
+  const logos = resolveCaseLogos(item);
+  if (!logos.length) return null;
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-1.5">
+      {logos.map((logo, index) => (
+        <div
+          key={logo.url}
+          title={`${logo.role === "prosecution" ? (ar ? "النيابة العامة" : "Public Prosecution") : (ar ? "الجهة المرتبطة" : "Related entity")}: ${logo.name}`}
+          className="grid h-11 min-w-12 place-items-center rounded-md border border-white/15 bg-white px-2 py-1 shadow-sm"
+        >
+          <img src={logo.url} alt={logo.name} className={`${index === 0 ? "max-h-8 max-w-16" : "max-h-8 max-w-20"} object-contain`} />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 async function audit(user: User, action: "create" | "update" | "delete" | "import" | "seed", entityId: string, summary: string) {
   try {
@@ -184,7 +204,7 @@ export function CaseManager({ locale, user }: { locale: Locale; user: User }) {
 
       <div className="mt-5 overflow-x-auto border border-white/10">
         <table className="w-full min-w-[980px] text-start text-sm"><thead className="bg-white/[.06] text-white/55"><tr>{[ar ? "القضية" : "Case", ar ? "الموكل والأطراف" : "Client & parties", ar ? "المحكمة" : "Court", ar ? "الحالة" : "Status", ar ? "الحكم" : "Judgment", ar ? "آخر تحديث" : "Updated", ""].map((label) => <th key={label} className="p-4 text-start font-semibold">{label}</th>)}</tr></thead><tbody>
-          {loading ? <tr><td colSpan={7} className="p-12 text-center"><LoaderCircle className="mx-auto animate-spin" /></td></tr> : results.length === 0 ? <tr><td colSpan={7} className="p-12 text-center text-white/45">{ar ? "لا توجد نتائج مطابقة." : "No matching cases."}</td></tr> : results.map((item) => <tr key={item.id} className="border-t border-white/8 align-top hover:bg-white/[.025]"><td className="p-4"><strong dir="ltr" className="block text-[#e0c27f]">{item.caseNumber}</strong><span className="mt-1 block text-xs text-white/45">{item.caseType} · {item.caseYear}</span>{item.isDemo && <span className="mt-2 inline-block bg-amber-400/10 px-2 py-1 text-[10px] text-amber-200">{ar ? "تجريبي" : "DEMO"}</span>}</td><td className="p-4"><strong>{item.clientName}</strong>{item.accusedName && <span className="mt-1 block text-xs text-white/45">{ar ? "المتهم/الخصم:" : "Accused/opponent:"} {item.accusedName}</span>}{item.victimName && <span className="block text-xs text-white/45">{ar ? "المجني عليه:" : "Victim:"} {item.victimName}</span>}</td><td className="max-w-48 p-4 text-white/65">{item.court}</td><td className="p-4"><span className="border border-[#b89555]/30 bg-[#b89555]/10 px-2 py-1 text-xs text-[#e2c98f]">{ar ? statusLabels[item.status] : item.status}</span>{item.nextHearing && <span className="mt-3 flex items-center gap-1 text-xs text-white/45"><CalendarDays size={13} />{item.nextHearing}</span>}</td><td className="max-w-56 p-4 text-xs leading-6 text-white/55">{item.judgment || "—"}</td><td className="p-4 text-xs text-white/40" dir="ltr">{new Date(item.updatedAt).toLocaleDateString(ar ? "ar-BH" : "en-BH")}</td><td className="p-4"><div className="flex gap-1"><LiquidButton size="icon" onClick={() => openEdit(item)} className="focus-ring p-2 text-white/60 hover:text-[#d0ad69]" aria-label={ar ? "تعديل" : "Edit"}><Pencil size={16} /></LiquidButton><LiquidButton size="icon" onClick={() => void deleteCase(item)} className="focus-ring p-2 text-white/60 hover:text-red-400" aria-label={ar ? "حذف" : "Delete"}><Trash2 size={16} /></LiquidButton></div></td></tr>)}
+          {loading ? <tr><td colSpan={7} className="p-12 text-center"><LoaderCircle className="mx-auto animate-spin" /></td></tr> : results.length === 0 ? <tr><td colSpan={7} className="p-12 text-center text-white/45">{ar ? "لا توجد نتائج مطابقة." : "No matching cases."}</td></tr> : results.map((item) => <tr key={item.id} className="border-t border-white/8 align-top hover:bg-white/[.025]"><td className="p-4"><CaseLogoCluster item={item} ar={ar} /><strong dir="ltr" className="block text-[#e0c27f]">{item.caseNumber}</strong><span className="mt-1 block text-xs text-white/45">{item.caseType} · {item.caseYear}</span>{item.isDemo && <span className="admin-demo-badge mt-2 inline-block rounded-sm border border-amber-500/25 bg-amber-400/10 px-2 py-1 text-[10px] font-bold text-amber-200">{ar ? "تجريبي" : "DEMO"}</span>}</td><td className="p-4"><strong>{item.clientName}</strong>{item.accusedName && <span className="mt-1 block text-xs text-white/45">{ar ? "المتهم/الخصم:" : "Accused/opponent:"} {item.accusedName}</span>}{item.victimName && <span className="block text-xs text-white/45">{ar ? "المجني عليه:" : "Victim:"} {item.victimName}</span>}</td><td className="max-w-48 p-4 text-white/65">{item.court}</td><td className="p-4"><span className="border border-[#b89555]/30 bg-[#b89555]/10 px-2 py-1 text-xs text-[#e2c98f]">{ar ? statusLabels[item.status] : item.status}</span>{item.nextHearing && <span className="mt-3 flex items-center gap-1 text-xs text-white/45"><CalendarDays size={13} />{item.nextHearing}</span>}</td><td className="max-w-56 p-4 text-xs leading-6 text-white/55">{item.judgment || "—"}</td><td className="p-4 text-xs text-white/40" dir="ltr">{new Date(item.updatedAt).toLocaleDateString(ar ? "ar-BH" : "en-BH")}</td><td className="p-4"><div className="flex gap-1"><LiquidButton size="icon" onClick={() => openEdit(item)} className="focus-ring p-2 text-white/60 hover:text-[#d0ad69]" aria-label={ar ? "تعديل" : "Edit"}><Pencil size={16} /></LiquidButton><LiquidButton size="icon" onClick={() => void deleteCase(item)} className="focus-ring p-2 text-white/60 hover:text-red-400" aria-label={ar ? "حذف" : "Delete"}><Trash2 size={16} /></LiquidButton></div></td></tr>)}
         </tbody></table>
       </div>
     </section>

@@ -65,7 +65,7 @@ export function Navbar({ locale }: { locale: Locale }) {
             <Link
               key={path}
               href={`/${locale}${path}`}
-              className={`focus-ring text-sm transition-colors hover:text-[#d1b579] ${pathname === `/${locale}${path}` ? "text-[#d1b579]" : "text-white/80"}`}
+              className={`focus-ring rounded-md px-3 py-2 text-sm transition-colors hover:bg-white/[.05] hover:text-[#d1b579] ${pathname === `/${locale}${path}` ? "bg-white/[.035] text-[#d1b579]" : "text-white/80"}`}
             >
               {label}
             </Link>
@@ -74,7 +74,7 @@ export function Navbar({ locale }: { locale: Locale }) {
         <div className="flex items-center gap-2">
           <Link
             href={`/${locale}/admin`}
-            className="focus-ring hidden min-h-11 items-center gap-2 border border-white/12 px-3 text-xs text-white/65 transition hover:border-[#d1b579]/50 hover:text-[#d1b579] md:flex"
+            className="focus-ring hidden min-h-11 items-center gap-2 rounded-md border border-white/12 px-3 text-xs text-white/65 transition hover:border-[#d1b579]/50 hover:text-[#d1b579] md:flex"
             title={locale === "ar" ? "دخول الإدارة" : "Admin sign-in"}
           >
             <LockKeyhole size={16} />
@@ -82,7 +82,7 @@ export function Navbar({ locale }: { locale: Locale }) {
           </Link>
           <Link
             href={switched}
-            className="focus-ring flex min-h-11 items-center gap-2 px-3 text-sm text-white/75 hover:text-white"
+            className="focus-ring flex min-h-11 items-center gap-2 rounded-md px-3 text-sm text-white/75 hover:bg-white/[.05] hover:text-white"
           >
             <Languages size={17} />
             {other.toUpperCase()}
@@ -104,29 +104,29 @@ export function Navbar({ locale }: { locale: Locale }) {
             <DropdownMenuContent
               align="end"
               sideOffset={10}
-              className="mobile-navbar-menu w-[min(20rem,calc(100vw-1rem))] rounded-2xl border border-white/10 bg-[#10191b]/98 p-2 text-white shadow-[0_24px_80px_rgba(0,0,0,.48)] backdrop-blur-xl lg:hidden"
+              className="mobile-navbar-menu w-[min(20rem,calc(100vw-1rem))] rounded-md border border-white/10 bg-[#10191b]/98 p-2 text-white shadow-[0_24px_80px_rgba(0,0,0,.48)] backdrop-blur-xl lg:hidden"
             >
               <div className="px-2 pb-2 pt-1">
                 <p className="text-[10px] font-bold tracking-wide text-[#d1b579]">{locale === "ar" ? "القائمة الرئيسية" : "MAIN MENU"}</p>
               </div>
               {links.map(([path, label]) => (
-                <DropdownMenuItem key={path} asChild className="rounded-xl p-0 outline-none">
+                <DropdownMenuItem key={path} asChild className="rounded-md p-0 outline-none">
                   <Link
                     href={`/${locale}${path}`}
-                    className={`focus-ring flex min-h-11 w-full items-center rounded-xl px-3 text-sm transition-colors ${pathname === `/${locale}${path}` ? "bg-[#b89555]/12 text-[#e8d19b]" : "text-white/75 hover:bg-white/[.05] hover:text-white"}`}
+                    className={`focus-ring flex min-h-11 w-full items-center rounded-md px-3 text-sm transition-colors ${pathname === `/${locale}${path}` ? "bg-[#b89555]/12 text-[#e8d19b]" : "text-white/75 hover:bg-white/[.05] hover:text-white"}`}
                   >
                     {label}
                   </Link>
                 </DropdownMenuItem>
               ))}
               <div className="my-1 border-t border-white/8" />
-              <DropdownMenuItem asChild className="rounded-xl p-0 outline-none">
-                <Link href={`/${locale}/consultation`} className="focus-ring flex min-h-11 w-full items-center justify-center rounded-xl bg-[#b89555] px-3 text-sm font-bold text-[#10191b] hover:bg-[#c5a365]">
+              <DropdownMenuItem asChild className="rounded-md p-0 outline-none">
+                <Link href={`/${locale}/consultation`} className="focus-ring flex min-h-11 w-full items-center justify-center rounded-md bg-[#b89555] px-3 text-sm font-bold text-[#10191b] hover:bg-[#c5a365]">
                   {m.nav.consultation}
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild className="mt-1 rounded-xl p-0 outline-none">
-                <Link href={`/${locale}/admin`} className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/12 px-3 text-sm text-white/70 hover:bg-white/[.04] hover:text-white">
+              <DropdownMenuItem asChild className="mt-1 rounded-md p-0 outline-none">
+                <Link href={`/${locale}/admin`} className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-white/12 px-3 text-sm text-white/70 hover:bg-white/[.04] hover:text-white">
                   <LockKeyhole size={16} />
                   {locale === "ar" ? "دخول الإدارة" : "Admin sign-in"}
                 </Link>

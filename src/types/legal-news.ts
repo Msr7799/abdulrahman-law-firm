@@ -8,6 +8,12 @@ export type LegalNewsCategory =
 
 export type LegalNewsVerification = "official" | "government" | "reported";
 
+export type LegalNewsLogo = {
+  name: string;
+  url: string;
+  role: "source" | "entity" | "prosecution";
+};
+
 export type LegalNewsItem = {
   id: string;
   title: string;
@@ -22,6 +28,10 @@ export type LegalNewsItem = {
   verification: LegalNewsVerification;
   importance: 1 | 2 | 3 | 4 | 5;
   imageUrl?: string;
+  sourceLogoUrl?: string;
+  sourceLogoName?: string;
+  sourceLogo?: LegalNewsLogo;
+  relatedLogos?: LegalNewsLogo[];
   legalInstrumentNumber?: string;
   gazetteNumber?: string;
 };

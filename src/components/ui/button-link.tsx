@@ -25,7 +25,7 @@ export function ButtonLink({
       target={external ? "_blank" : undefined}
       rel={external ? "noopener noreferrer" : undefined}
       className={cn(
-        "action-button focus-ring inline-flex min-h-12 items-center justify-center gap-2 overflow-hidden px-6 py-3 text-sm font-bold transition-all duration-300",
+        "action-button focus-ring inline-flex min-h-12 items-center justify-center gap-2 overflow-hidden rounded-md px-6 py-3 text-sm font-bold transition-all duration-300",
         styles[variant],
         className,
       )}

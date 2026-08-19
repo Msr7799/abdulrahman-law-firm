@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { unstable_cache } from "next/cache";
 import type { AgentSource } from "@/types/admin";
 import type { LegalNewsCategory, LegalNewsItem, LegalNewsPeriod } from "@/types/legal-news";
+import { resolveNewsLogos } from "@/lib/bahrain-logo-match";
 
 const DEFAULT_CACHE_SECONDS = 1800;
 const DEFAULT_MAX_ITEMS = 18;
@@ -67,6 +68,27 @@ function extractImage(xml: string) {
     xml.match(/<img[^>]+src=["']([^"']+)["']/i)?.[1],
   ].filter(Boolean) as string[];
   return candidates[0] ?? "";
+}
+
+function extractPageImage(html: string, pageUrl: string) {
+  const candidates = [
+    html.match(/<meta[^>]+property=["']og:image:secure_url["'][^>]+content=["']([^"']+)["']/i)?.[1],
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image:secure_url["']/i)?.[1],
+    html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)?.[1],
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i)?.[1],
+    html.match(/<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/i)?.[1],
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image(?::src)?["']/i)?.[1],
+    html.match(/<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["']/i)?.[1],
+    html.match(/<article[\s\S]{0,14000}?<img[^>]+(?:data-src|src)=["']([^"']+)["']/i)?.[1],
+    html.match(/<main[\s\S]{0,14000}?<img[^>]+(?:data-src|src)=["']([^"']+)["']/i)?.[1],
+  ].filter(Boolean) as string[];
+  for (const candidate of candidates) {
+    const cleaned = decodeHtml(candidate).trim();
+    if (!cleaned || /^data:/i.test(cleaned) || /(?:logo|favicon|sprite|icon)[^/]*\.(?:svg|png|webp|jpg)/i.test(cleaned)) continue;
+    const absolute = absolutizeUrl(cleaned, pageUrl);
+    if (absolute) return absolute;
+  }
+  return "";
 }
 
 function categoryFor(text: string): LegalNewsCategory {
@@ -155,6 +177,38 @@ async function fetchText(url: string) {
   } catch { return ""; }
 }
 
+async function enrichNewsMedia(items: LegalNewsItem[]) {
+  return Promise.all(items.map(async (item) => {
+    let imageUrl = item.imageUrl ?? "";
+    if (!imageUrl) {
+      const html = await fetchText(item.sourceUrl);
+      imageUrl = html ? extractPageImage(html, item.sourceUrl) : "";
+    }
+
+    const logos = resolveNewsLogos({
+      sourceName: item.sourceName,
+      sourceUrl: item.sourceUrl,
+      title: item.title,
+      summary: item.summary,
+      details: item.details,
+    });
+    const sourceLogo = logos.find((logo) => logo.role === "source") ?? logos[0];
+    const relatedLogos = logos
+      .filter((logo) => logo.url !== sourceLogo?.url)
+      .slice(0, 3)
+      .map(({ name, url, role = "entity" }) => ({ name, url, role }));
+
+    return {
+      ...item,
+      imageUrl: imageUrl || undefined,
+      sourceLogoUrl: sourceLogo?.url,
+      sourceLogoName: sourceLogo?.name,
+      sourceLogo: sourceLogo ? { name: sourceLogo.name, url: sourceLogo.url, role: sourceLogo.role ?? "source" } : undefined,
+      relatedLogos,
+    };
+  }));
+}
+
 async function discoverBnaFeeds() {
   const configured = (process.env.BNA_RSS_URLS ?? "").split(",").map((item) => item.trim()).filter(Boolean);
   if (configured.length) return configured;
@@ -196,6 +250,20 @@ async function legislationItems() {
   }).filter((item): item is LegalNewsItem => Boolean(item));
 }
 
+function sourceNameFromHostname(hostname: string) {
+  if (/legalaffairs\.gov\.bh/i.test(hostname)) return "هيئة التشريع والرأي القانوني";
+  if (/moj\.gov\.bh/i.test(hostname)) return "وزارة العدل والشؤون الإسلامية والأوقاف";
+  if (/ppb\.gov\.bh/i.test(hostname)) return "النيابة العامة";
+  if (/akhbar-alkhaleej\.com/i.test(hostname)) return "أخبار الخليج";
+  if (/albiladpress\.com/i.test(hostname)) return "البلاد";
+  if (/alayam\.com/i.test(hostname)) return "الأيام";
+  if (/alwatan/i.test(hostname)) return "الوطن";
+  if (/gdnonline\.com/i.test(hostname)) return "Gulf Daily News";
+  if (/newsofbahrain\.com/i.test(hostname)) return "Daily Tribune";
+  if (/(?:^|\.)bna\.bh$|beta\.bna\.bh/i.test(hostname)) return "وكالة أنباء البحرين";
+  return hostname.replace(/^www\./, "");
+}
+
 async function tavilyFallback() {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey || process.env.LEGAL_NEWS_TAVILY_FALLBACK === "false") return [];
@@ -212,7 +280,7 @@ async function tavilyFallback() {
         include_answer: false,
         include_images: false,
         include_raw_content: false,
-        include_domains: ["beta.bna.bh", "bna.bh", "legalaffairs.gov.bh", "moj.gov.bh", "ppb.gov.bh", "akhbar-alkhaleej.com", "albiladpress.com"],
+        include_domains: ["beta.bna.bh", "bna.bh", "legalaffairs.gov.bh", "moj.gov.bh", "ppb.gov.bh", "akhbar-alkhaleej.com", "albiladpress.com", "alayam.com", "alwatannews.net", "gdnonline.com", "newsofbahrain.com"],
       }),
       signal: AbortSignal.timeout(14_000),
     });
@@ -227,7 +295,7 @@ async function tavilyFallback() {
         title: result.title,
         summary: result.content,
         details: result.content,
-        sourceName: official ? "مصدر حكومي بحريني" : bna ? "وكالة أنباء البحرين" : hostname.replace(/^www\./, ""),
+        sourceName: official ? sourceNameFromHostname(hostname) : bna ? "وكالة أنباء البحرين" : sourceNameFromHostname(hostname),
         sourceUrl: result.url,
         sourceType: official ? "official" : bna ? "bna" : "press",
         publishedAt: result.published_date,
@@ -252,10 +320,11 @@ async function loadLegalNewsUncached() {
   const [bna, legislation] = await Promise.all([bnaItems(), legislationItems()]);
   let merged = [...bna, ...legislation];
   if (merged.length < 5) merged = [...merged, ...(await tavilyFallback())];
-  return dedupe(merged);
+  const deduped = dedupe(merged);
+  return enrichNewsMedia(deduped);
 }
 
-const getCachedLegalNews = unstable_cache(loadLegalNewsUncached, ["bahrain-legal-news-v1"], {
+const getCachedLegalNews = unstable_cache(loadLegalNewsUncached, ["bahrain-legal-news-v4-smart-logos"], {
   revalidate: cacheSeconds(),
   tags: ["legal-news"],
 });

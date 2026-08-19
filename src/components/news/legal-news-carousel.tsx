@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Newspap
 import Link from "next/link";
 import type { Locale } from "@/config/site";
 import type { LegalNewsItem } from "@/types/legal-news";
+import { NewsLogoCluster } from "@/components/news/news-logo-cluster";
 
 function categoryLabel(category: LegalNewsItem["category"], ar: boolean) {
   const arMap = { legislation: "تشريعات", judiciary: "قضاء", prosecution: "النيابة", "justice-service": "خدمات عدلية", "legal-profession": "المهنة القانونية", government: "شأن حكومي" };
@@ -52,8 +53,15 @@ export function LegalNewsCarousel({ locale, items }: { locale: Locale; items: Le
             <motion.article key={current.id} initial={{ opacity: 0, x: ar ? -22 : 22 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: ar ? 22 : -22 }} transition={{ duration: 0.32, ease: "easeOut" }} className="grid min-h-[31rem] md:min-h-[25rem] md:grid-cols-[minmax(0,1.05fr)_minmax(0,.95fr)]">
               <div className="relative min-h-64 overflow-hidden bg-[#132b32] md:min-h-full">
                 <div className="absolute inset-0 bg-[linear-gradient(135deg,#132b32,#071216)]" />
-                {current.imageUrl ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(to top,rgba(7,18,22,.65),rgba(7,18,22,.05)),url(${JSON.stringify(current.imageUrl).slice(1,-1)})` }} /> : <div className="absolute inset-0 grid place-items-center"><img src="/assets/logos/bahrain-official-logo-no-text-gold.svg" alt="" className="h-36 w-auto opacity-40 sm:h-48" /></div>}
-                <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 p-4 text-[10px] text-white/70 sm:p-5"><span className="border border-white/20 bg-black/25 px-2.5 py-1 font-bold backdrop-blur">{categoryLabel(current.category, ar)}</span><span>{current.verification === "official" ? (ar ? "مصدر رسمي" : "Official source") : current.verification === "government" ? (ar ? "مصدر حكومي" : "Government source") : (ar ? "صحافة محلية" : "Local press")}</span></div>
+                {current.imageUrl ? (
+                  <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(to top,rgba(7,18,22,.65),rgba(7,18,22,.05)),url(${JSON.stringify(current.imageUrl).slice(1,-1)})` }} />
+                ) : current.sourceLogoUrl || current.relatedLogos?.length ? (
+                  <NewsLogoCluster item={current} mode="panel" />
+                ) : (
+                  <div className="absolute inset-0 grid place-items-center"><img src="/assets/logos/bahrain-official-logo-no-text-gold.svg" alt="" className="h-36 w-auto opacity-40 sm:h-48" /></div>
+                )}
+                {current.imageUrl && (current.sourceLogoUrl || current.relatedLogos?.length) && <NewsLogoCluster item={current} mode="overlay" />}
+                <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 p-4 text-[10px] text-white/70 sm:p-5"><span className="rounded-sm border border-white/20 bg-black/45 px-2.5 py-1 font-bold backdrop-blur">{categoryLabel(current.category, ar)}</span><span className="rounded-sm bg-black/35 px-2 py-1 backdrop-blur">{current.verification === "official" ? (ar ? "مصدر رسمي" : "Official source") : current.verification === "government" ? (ar ? "مصدر حكومي" : "Government source") : (ar ? "صحافة محلية" : "Local press")}</span></div>
               </div>
               <div className="flex flex-col justify-center p-6 sm:p-8 lg:p-10">
                 <div className="text-xs font-bold text-[#9a783f]">{current.sourceName} · {dateLabel(current.publishedAt, locale)}</div>

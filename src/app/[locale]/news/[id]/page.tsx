@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { isLocale } from "@/config/site";
 import { getLegalNews } from "@/lib/legal-news";
+import { NewsLogoCluster } from "@/components/news/news-logo-cluster";
 
 export default async function LegalNewsDetail({ params }: { params: Promise<{ locale: string; id: string }> }) {
   const { locale, id } = await params;
@@ -18,9 +19,10 @@ export default async function LegalNewsDetail({ params }: { params: Promise<{ lo
     <article className="container-site max-w-4xl">
       <Link href={`/${locale}`} className="focus-ring inline-flex items-center gap-2 text-xs font-bold text-[#9a783f]"><Arrow size={15} />{ar ? "العودة للرئيسية" : "Back to home"}</Link>
       <div className="mt-6 overflow-hidden border border-[#ded8cc] bg-[#fffdf8] shadow-[0_24px_80px_rgba(16,25,27,.08)]">
-        <div className="relative min-h-64 bg-[#132b32] sm:min-h-80">
-          {item.imageUrl ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(to top,rgba(7,18,22,.78),rgba(7,18,22,.08)),url(${JSON.stringify(item.imageUrl).slice(1,-1)})` }} /> : <div className="absolute inset-0 grid place-items-center"><img src="/assets/logos/bahrain-official-logo-no-text-gold.svg" alt="" className="h-40 opacity-40" /></div>}
-          <div className="absolute inset-x-0 bottom-0 p-6 text-white sm:p-8"><span className="inline-flex border border-white/20 bg-black/25 px-2.5 py-1 text-[10px] font-bold backdrop-blur">{item.sourceName}</span><h1 className="display mt-4 max-w-3xl text-3xl leading-tight sm:text-4xl">{item.title}</h1><p className="mt-3 text-xs text-white/60">{date}</p></div>
+        <div className="relative min-h-64 overflow-hidden bg-[#132b32] sm:min-h-80">
+          {item.imageUrl ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(to top,rgba(7,18,22,.82),rgba(7,18,22,.10)),url(${JSON.stringify(item.imageUrl).slice(1,-1)})` }} /> : item.sourceLogoUrl || item.relatedLogos?.length ? <NewsLogoCluster item={item} mode="panel" /> : <div className="absolute inset-0 grid place-items-center"><img src="/assets/logos/bahrain-official-logo-no-text-gold.svg" alt="" className="h-40 opacity-40" /></div>}
+          {item.imageUrl && (item.sourceLogoUrl || item.relatedLogos?.length) && <NewsLogoCluster item={item} mode="overlay" />}
+          <div className={`absolute inset-x-0 bottom-0 p-6 sm:p-8 ${item.imageUrl ? "text-white" : "text-[#132b32]"}`}><span className={`inline-flex rounded-sm border px-2.5 py-1 text-[10px] font-bold backdrop-blur ${item.imageUrl ? "border-white/20 bg-black/35" : "border-[#132b32]/15 bg-white/80"}`}>{item.sourceName}</span><h1 className="display mt-4 max-w-3xl text-3xl leading-tight sm:text-4xl">{item.title}</h1><p className={`mt-3 text-xs ${item.imageUrl ? "text-white/60" : "text-[#657073]"}`}>{date}</p></div>
         </div>
         <div className="p-6 sm:p-8">
           <div className="mb-6 flex items-start gap-3 border border-[#b89555]/25 bg-[#b89555]/8 p-4 text-sm leading-7 text-[#5f5139]"><ShieldCheck className="mt-1 shrink-0 text-[#9a783f]" size={18} /><p>{ar ? "هذه الصفحة تعرض ملخصاً موسعاً داخل موقع المكتب اعتماداً على المادة المتاحة من المصدر، ولا تعيد نشر المقال الصحفي كاملاً. يُرجع للمصدر الأصلي عند الحاجة للتحقق من النص الكامل." : "This page provides an expanded in-site summary based on the source material and does not republish the full original article. Refer to the original source when the full text must be verified."}</p></div>

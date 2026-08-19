@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { User } from "firebase/auth";
 import { signOut } from "firebase/auth";
 import Image from "next/image";
@@ -34,11 +34,25 @@ export function AdminDashboard({ locale, user, initialTab }: { locale: Locale; u
     { id: "agent" as const, label: ar ? "الوكيل القانوني" : "Legal agent", icon: Bot },
   ];
 
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const urlTab = url.searchParams.get("adminTab") as Tab | null;
+    const savedTab = window.localStorage.getItem("law-admin-active-tab") as Tab | null;
+    const restored = urlTab && validTabs.has(urlTab) ? urlTab : savedTab && validTabs.has(savedTab) ? savedTab : null;
+    if (restored && restored !== tab) setTab(restored);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("law-admin-active-tab", tab);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("adminTab") !== tab) {
+      url.searchParams.set("adminTab", tab);
+      window.history.replaceState(window.history.state, "", url);
+    }
+  }, [tab]);
+
   function selectTab(nextTab: Tab) {
     setTab(nextTab);
-    const url = new URL(window.location.href);
-    url.searchParams.set("adminTab", nextTab);
-    window.history.replaceState(window.history.state, "", url);
   }
 
   const agentMode = tab === "agent";
@@ -47,7 +61,7 @@ export function AdminDashboard({ locale, user, initialTab }: { locale: Locale; u
 
   return (
     <main id="main" className={`admin-shell admin-grid-bg bg-[#091b21] text-white ${agentMode ? "h-[calc(100dvh-5rem)] min-h-0 overflow-hidden" : "min-h-[calc(100vh-5rem)]"}`}>
-      <div className={`container-site ${agentMode ? "flex h-full min-h-0 flex-col py-0" : "py-8 sm:py-12"}`}>
+      <div className={agentMode ? "flex h-full min-h-0 w-full max-w-none flex-col px-0 py-0" : "container-site py-8 sm:py-12"}>
         {!agentMode && <header className="mb-8 border border-white/10 bg-[#102a31]/90 p-5 shadow-2xl shadow-black/20 sm:p-7">
           <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
             <div className="flex items-center gap-4">
@@ -78,13 +92,13 @@ export function AdminDashboard({ locale, user, initialTab }: { locale: Locale; u
         </header>}
 
         {agentMode && (
-          <div className="relative z-30 flex h-12 shrink-0 items-center justify-between border-x border-b border-white/10 bg-[#0a171b]/95 px-2.5 backdrop-blur sm:px-4">
+          <div className="relative z-30 flex h-14 shrink-0 items-center justify-between border-b border-white/10 bg-[#0a171b]/95 px-3 backdrop-blur sm:px-5">
             <div className="flex min-w-0 items-center gap-2 text-xs sm:text-sm">
               <DropdownMenu dir={ar ? "rtl" : "ltr"}>
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="focus-ring flex min-h-9 shrink-0 items-center gap-2 rounded-lg border border-white/10 bg-white/[.035] px-2.5 font-bold text-white/75 transition duration-200 hover:border-[#b89555]/35 hover:bg-white/[.06] hover:text-white sm:px-3"
+                    className="focus-ring flex min-h-9 shrink-0 items-center gap-2 rounded-md border border-white/10 bg-white/[.035] px-2.5 font-bold text-white/75 transition duration-200 hover:border-[#b89555]/35 hover:bg-white/[.06] hover:text-white sm:px-3"
                   >
                     <Menu size={16} className="lg:hidden" />
                     <LayoutDashboard size={15} className="hidden lg:block" />
@@ -95,7 +109,7 @@ export function AdminDashboard({ locale, user, initialTab }: { locale: Locale; u
                 <DropdownMenuContent
                   align={ar ? "start" : "start"}
                   sideOffset={8}
-                  className="admin-switcher-menu w-[min(22rem,calc(100vw-1rem))] rounded-2xl border border-white/10 bg-[#0b171b]/98 p-2 text-white shadow-[0_24px_80px_rgba(0,0,0,.48)] backdrop-blur-xl"
+                  className="admin-switcher-menu w-[min(22rem,calc(100vw-1rem))] rounded-md border border-white/10 bg-[#0b171b]/98 p-2 text-white shadow-[0_24px_80px_rgba(0,0,0,.48)] backdrop-blur-xl"
                 >
                   <div className="px-2 pb-2 pt-1">
                     <h3 className="text-sm font-bold text-white">{ar ? "أقسام الإدارة" : "Admin sections"}</h3>
@@ -109,9 +123,10 @@ export function AdminDashboard({ locale, user, initialTab }: { locale: Locale; u
                         <DropdownMenuItem
                           key={item.id}
                           onSelect={() => selectTab(item.id)}
-                          className={`admin-switcher-item flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border px-2.5 text-start text-xs font-bold outline-none transition-colors duration-150 sm:text-sm ${active ? "border-[#b89555]/40 bg-[#b89555]/12 text-[#ead39f]" : "border-transparent text-white/65 hover:border-white/10 hover:bg-white/[.045] hover:text-white focus:bg-white/[.055] focus:text-white"}`}
+                          data-active={active ? "true" : "false"}
+                          className={`admin-switcher-item flex min-h-11 cursor-pointer items-center gap-3 rounded-md border px-2.5 text-start text-xs font-bold outline-none transition-colors duration-150 sm:text-sm ${active ? "border-[#b89555]/40 bg-[#b89555]/12 text-[#ead39f]" : "border-transparent text-white/65 hover:border-white/10 hover:bg-white/[.045] hover:text-white focus:bg-white/[.055] focus:text-white"}`}
                         >
-                          <span className={`grid size-8 shrink-0 place-items-center rounded-lg transition-colors ${active ? "bg-[#b89555]/15 text-[#d9bb78]" : "bg-white/[.04] text-white/45"}`}><Icon size={16} /></span>
+                          <span className={`admin-switcher-icon grid size-8 shrink-0 place-items-center rounded-md transition-colors ${active ? "bg-[#b89555]/15 text-[#d9bb78]" : "bg-white/[.04] text-white/45"}`}><Icon size={16} /></span>
                           <span className="min-w-0 flex-1 truncate">{item.label}</span>
                           {active && <span className="size-1.5 shrink-0 rounded-full bg-[#d0ad69]" />}
                         </DropdownMenuItem>
@@ -120,6 +135,13 @@ export function AdminDashboard({ locale, user, initialTab }: { locale: Locale; u
                   </div>
                 </DropdownMenuContent>
               </DropdownMenu>
+              <ThemeTogglerButton
+                modes={["dark", "light"]}
+                direction={ar ? "rtl" : "ltr"}
+                aria-label={ar ? "تبديل الوضع الليلي والنهاري" : "Toggle light and dark theme"}
+                title={ar ? "تبديل الوضع الليلي والنهاري" : "Toggle light and dark theme"}
+                className="admin-theme-toggle min-h-9 border-white/10 bg-white/[.035] text-white/70 hover:bg-white/[.07]"
+              />
               <span className="hidden text-white/25 sm:inline">/</span>
               <span className="min-w-0 truncate font-bold text-white/80">{ar ? "الوكيل القانوني" : "Legal agent"}</span>
             </div>
@@ -139,7 +161,7 @@ export function AdminDashboard({ locale, user, initialTab }: { locale: Locale; u
           })}
         </nav>}
 
-        <section key={tab} className={`animate-in fade-in slide-in-from-bottom-2 duration-300 ${agentMode ? "min-h-0 flex-1" : ""}`}>
+        <section key={tab} className={`animate-in fade-in slide-in-from-bottom-2 duration-300 ${agentMode ? "min-h-0 flex-1 overflow-hidden" : ""}`}>
           {tab === "overview" && <DashboardOverview locale={locale} onOpen={selectTab} />}
           {tab === "integrations" && <GovernmentIntegrationHub locale={locale} />}
           {tab === "roadmap" && <JudicialRoadmap locale={locale} />}
@@ -154,7 +176,7 @@ export function AdminDashboard({ locale, user, initialTab }: { locale: Locale; u
             <div className="flex items-start gap-3">
               <ShieldCheck className="mt-0.5 shrink-0 text-[#e2c98f]" size={21} />
               <div>
-                <h2 className="text-sm font-bold text-[#f0dca9]">{ar ? "للصيانة أو التبليغ عن عطل" : "Maintenance or report a problem"}</h2>
+                <h2 className="admin-support-title text-sm font-bold text-[#f0dca9]">{ar ? "للصيانة أو التبليغ عن عطل" : "Maintenance or report a problem"}</h2>
                 <p className="mt-1 text-xs leading-6 text-white/55">{ar ? "تواصل مباشرة مع مبرمج الموقع محمد سعود الرميحي." : "Contact the website developer directly: Mohammed Saud Alromaihi."}</p>
               </div>
             </div>
