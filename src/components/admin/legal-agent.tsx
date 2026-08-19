@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import Image from "next/image";
 import type { User } from "firebase/auth";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { onValue, ref, remove, set } from "firebase/database";
-import { Bot, Check, CheckCircle2, ChevronDown, CircleDashed, Copy, ExternalLink, FileText, Files, Globe2, History, ImageIcon, Landmark, LoaderCircle, Mic, MicOff, Paperclip, Pencil, RotateCcw, Search, Send, ShieldAlert, Sparkles, Square, TerminalSquare, Trash2, X } from "lucide-react";
+import { Bot, Check, CheckCircle2, ChevronDown, CircleDashed, Copy, ExternalLink, FileText, Files, Globe2, History, ImageIcon, Landmark, LoaderCircle, Mic, MicOff, Newspaper, Paperclip, Pencil, RotateCcw, Search, Send, ShieldAlert, Sparkles, Square, TerminalSquare, Trash2, X } from "lucide-react";
 import type { Locale } from "@/config/site";
 import { firestore, realtimeDatabase } from "@/lib/firebase/client";
 import type { AgentImage, AgentSource } from "@/types/admin";
@@ -34,6 +35,7 @@ const quickQuestions = {
     { icon: Globe2, label: "الحكومة الإلكترونية", question: "اختر معاملة قضائية بحرينية شائعة واشرح خطوات إنجازها إلكترونياً والمستندات المطلوبة، مع رابط الخدمة الحكومية الرسمي." },
     { icon: Search, label: "بحث وروابط", question: "استخدم Tavily للبحث عن أحدث الخدمات القضائية الإلكترونية في البحرين، ثم اعرض خلاصة مرتبة وروابط المصادر الرسمية." },
     { icon: ImageIcon, label: "روابط وصور", question: "ابحث عبر Tavily عن بوابات العدالة والقضاء الرسمية في البحرين، واعرض الروابط مع الصور المتاحة من نتائج البحث وبيّن وظيفة كل بوابة." },
+    { icon: Newspaper, label: "المستجدات القانونية", question: "لخص لي أهم الأخبار والمستجدات القانونية والقضائية والتشريعية في البحرين خلال آخر 7 أيام. فرّق بوضوح بين التشريع الرسمي والخبر الصحفي، واذكر المصدر والتاريخ وأهميته العملية للمكتب." },
   ],
   en: [
     { icon: Files, label: "Case insight", question: "Review the registered priority cases and summarize each status and next hearing, citing the case record used." },
@@ -41,6 +43,7 @@ const quickQuestions = {
     { icon: Globe2, label: "eGovernment", question: "Choose a common Bahrain judicial transaction and explain its online steps and required documents, with the official service link." },
     { icon: Search, label: "Research & links", question: "Use Tavily to find the latest Bahrain online judicial services, then provide a structured summary with official-source links." },
     { icon: ImageIcon, label: "Links & images", question: "Use Tavily to find Bahrain's official justice and judiciary portals, show available result images and links, and explain each portal's purpose." },
+    { icon: Newspaper, label: "Legal updates", question: "Summarize the most important Bahrain legal, judicial and legislative updates from the last 7 days. Clearly distinguish official legislation from press reporting, with source, date and practical relevance to the office." },
   ],
 };
 
@@ -126,12 +129,19 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
   const [editingMessageId, setEditingMessageId] = useState("");
   const [editValue, setEditValue] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState("");
+  const [typingMessageId, setTypingMessageId] = useState("");
+  const [typingLength, setTypingLength] = useState(0);
+  const [stoppedTyping, setStoppedTyping] = useState<{ id: string; length: number } | null>(null);
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const speechRef = useRef<SpeechRecognitionLike | null>(null);
   const requestControllerRef = useRef<AbortController | null>(null);
   const attachmentFilesRef = useRef(new Map<string, PendingAttachment[]>());
   const imageHydrationRef = useRef(new Set<string>());
+  const responseActive = busy || Boolean(typingMessageId);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -151,6 +161,34 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     return () => window.clearInterval(timer);
   }, [cooldownUntil]);
 
+  useEffect(() => {
+    if (!typingMessageId) return;
+    const message = messages.find((item) => item.id === typingMessageId && item.role === "assistant");
+    if (!message) {
+      setTypingMessageId("");
+      setTypingLength(0);
+      return;
+    }
+    if (typingLength >= message.content.length) {
+      setTypingMessageId("");
+      setTypingLength(0);
+      return;
+    }
+
+    const remaining = message.content.length - typingLength;
+    const chunkSize = remaining > 2400 ? 14 : remaining > 1200 ? 10 : remaining > 500 ? 7 : 4;
+    const timer = window.setTimeout(() => {
+      setTypingLength((current) => Math.min(message.content.length, current + chunkSize));
+    }, 16);
+
+    return () => window.clearTimeout(timer);
+  }, [messages, typingLength, typingMessageId]);
+
+  useEffect(() => {
+    if (!typingMessageId || typingLength === 0 || typingLength % 112 > 14) return;
+    messagesEndRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
+  }, [typingLength, typingMessageId]);
+
   useEffect(() => onValue(ref(realtimeDatabase, `agentConversations/${user.uid}`), (snapshot) => {
     const value = snapshot.val() as Record<string, Omit<StoredConversation, "id">> | null;
     const items = value ? Object.entries(value).map(([id, item]) => ({ id, ...item })) : [];
@@ -169,6 +207,18 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     }).catch(() => urls.forEach((url) => imageHydrationRef.current.delete(url)));
     return () => controller.abort();
   }, [messages, user]);
+
+  useEffect(() => {
+    const textarea = inputRef.current;
+    if (!textarea) return;
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 168)}px`;
+  }, [input]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ block: "end", behavior: messages.length > 2 ? "smooth" : "auto" });
+  }, [messages.length, busy]);
+
 
   const cooldown = Math.max(0, Math.ceil((cooldownUntil - clock) / 1000));
   const recentPrompts = useMemo(() => {
@@ -214,7 +264,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     attachments.forEach((item) => item.previewUrl && URL.revokeObjectURL(item.previewUrl));
     messages.flatMap((item) => item.attachments ?? []).forEach((item) => item.previewUrl && URL.revokeObjectURL(item.previewUrl));
     attachmentFilesRef.current.clear();
-    setAttachments([]); setConversationId(""); setMessages([welcomeMessage]); setInput(""); setEditingMessageId(""); setError("");
+    setAttachments([]); setConversationId(""); setMessages([welcomeMessage]); setInput(""); setEditingMessageId(""); setError(""); setTypingMessageId(""); setTypingLength(0); setStoppedTyping(null); setMobileToolsOpen(false);
   }
 
   function openConversation(conversation: StoredConversation) {
@@ -222,7 +272,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     messages.flatMap((item) => item.attachments ?? []).forEach((item) => item.previewUrl && URL.revokeObjectURL(item.previewUrl));
     setAttachments([]);
     attachmentFilesRef.current.clear();
-    setConversationId(conversation.id); setMessages(conversation.messages?.length ? conversation.messages : [welcomeMessage]); setInput(""); setEditingMessageId(""); setError("");
+    setConversationId(conversation.id); setMessages(conversation.messages?.length ? conversation.messages : [welcomeMessage]); setInput(""); setEditingMessageId(""); setError(""); setTypingMessageId(""); setTypingLength(0); setStoppedTyping(null); setMobileToolsOpen(false);
   }
 
   async function deleteConversation(id: string) {
@@ -285,6 +335,14 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
   }
 
   function stopGeneration() {
+    if (typingMessageId) {
+      setStoppedTyping({ id: typingMessageId, length: Math.max(1, typingLength) });
+      setTypingMessageId("");
+      setTypingLength(0);
+      setError("");
+      return;
+    }
+
     requestControllerRef.current?.abort();
     requestControllerRef.current = null;
     setBusy(false);
@@ -295,13 +353,13 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     const selectedAttachments = options?.selectedAttachments ?? attachments;
     const baseMessages = options?.baseMessages ?? messages;
     const question = value.trim() || (selectedAttachments.length ? (ar ? "حلّل جميع المرفقات وقدّم خلاصة دقيقة مع أهم الملاحظات." : "Analyze every attachment and provide an accurate summary with the key observations.") : "");
-    if (!question || busy || cooldown > 0) return;
+    if (!question || responseActive || cooldown > 0) return;
     const displayAttachments = selectedAttachments.map((item) => ({ id: item.id, name: item.name, type: item.type, size: item.size, previewUrl: item.previewUrl }));
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: "user", content: question, attachments: displayAttachments };
     const nextConversationId = conversationId || crypto.randomUUID();
     const withUserMessage = [...baseMessages, userMessage];
     attachmentFilesRef.current.set(userMessage.id, selectedAttachments);
-    setConversationId(nextConversationId); setMessages(withUserMessage); if (!options) { setAttachments([]); setInput(""); } setEditingMessageId(""); setBusy(true); setError(""); setCooldownUntil(requestedAt + 10_000); setClock(requestedAt);
+    setConversationId(nextConversationId); setMessages(withUserMessage); if (!options) { setAttachments([]); setInput(""); } setEditingMessageId(""); setStoppedTyping(null); setBusy(true); setError(""); setCooldownUntil(requestedAt + 10_000); setClock(requestedAt);
     void saveConversation(nextConversationId, withUserMessage, question, requestedAt);
     try {
       const token = await user.getIdToken();
@@ -321,6 +379,10 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
       const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: "assistant", content: body.answer, model: body.model, nodes: body.nodes, code: body.code, codeResult: body.codeResult, sources: body.sources, images: body.images, caseMatches: body.caseMatches };
       const completedMessages = [...withUserMessage, assistantMessage];
       setMessages(completedMessages);
+      setBusy(false);
+      setTypingLength(Math.min(8, assistantMessage.content.length));
+      setTypingMessageId(assistantMessage.id);
+      setStoppedTyping(null);
       void saveConversation(nextConversationId, completedMessages, question, requestedAt + 1);
       try {
         await addDoc(collection(firestore, "auditLogs"), { action: "ai_query", entityType: "agent", entityId: crypto.randomUUID(), summary: `سؤال للوكيل: ${question.slice(0, 420)} (${selectedAttachments.length} attachments)`, createdBy: user.uid, createdAt: serverTimestamp() });
@@ -365,50 +427,174 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
   }
 
   return (
-    <section className="relative grid h-[calc(100dvh-5rem)] min-h-[32rem] w-full min-w-0 max-w-full overflow-hidden border border-white/10 xl:grid-cols-[minmax(0,1fr)_280px]">
+    <section
+      data-legal-agent-root="true"
+      className="relative grid h-full min-h-0 w-full min-w-0 max-w-full touch-pan-y overflow-hidden overscroll-none bg-[#0c1c21] xl:grid-cols-[minmax(0,1fr)_280px] xl:border xl:border-white/10"
+    >
       <div className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#0c1c21]">
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-3 sm:px-5 sm:py-4"><div className="flex min-w-0 flex-1 items-center gap-2.5"><span className="grid size-9 shrink-0 place-items-center bg-[#b89555]/15 text-[#d0ad69] sm:size-11"><Bot size={20} /></span><div className="min-w-0"><h2 className="truncate text-sm font-bold sm:text-base">{ar ? "وكيل القضايا والقانون البحريني" : "Bahrain cases & law agent"}</h2><p className="mt-0.5 truncate text-[10px] text-white/40 sm:mt-1 sm:text-xs">RAG · Tavily · Gemini Multimodal</p></div></div><div className="flex shrink-0 items-center gap-1"><LiquidButton type="button" onClick={() => setMobileHistoryOpen(true)} aria-label={ar ? "المحادثات السابقة" : "Chat history"} title={ar ? "المحادثات السابقة" : "Chat history"} className="focus-ring grid size-10 place-items-center text-white/45 hover:bg-white/5 hover:text-white xl:hidden"><History size={18} /></LiquidButton><LiquidButton onClick={() => { setMobileHistoryOpen(false); newConversation(); }} aria-label={ar ? "محادثة جديدة" : "New chat"} title={ar ? "محادثة جديدة" : "New chat"} className="focus-ring flex min-h-10 items-center gap-2 p-2 text-xs text-white/45 hover:bg-white/5 hover:text-white"><NewChatIcon className="text-lg" /><span className="hidden sm:inline">{ar ? "محادثة جديدة" : "New chat"}</span></LiquidButton></div></div>
-        <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4 [scrollbar-gutter:stable] sm:space-y-5 sm:p-6">
-          {messages.map((message) => <article key={message.id} dir="auto" className={message.role === "user" ? "ms-auto w-fit max-w-[92%] overflow-hidden break-words bg-[#b89555] p-3.5 !text-white [overflow-wrap:anywhere] sm:max-w-[min(86%,48rem)] sm:p-4" : "w-full min-w-0 overflow-hidden break-words bg-transparent p-1 [overflow-wrap:anywhere] sm:border sm:border-white/10 sm:bg-white/[.045] sm:p-6"}>
-            {message.attachments && message.attachments.length > 0 && <MessageAttachments attachments={message.attachments} ar={ar} />}
-            {message.role === "assistant" ? <div className="min-w-0 break-words [overflow-wrap:anywhere]"><MarkdownAnswer images={message.images}>{linkCaseCitations(message.content, message.id, message.caseMatches?.length ?? 0)}</MarkdownAnswer></div> : editingMessageId === message.id ? <form onSubmit={(event) => { event.preventDefault(); if (editValue.trim().length >= 1) void rerunUserMessage(message.id, Date.now(), editValue.trim()); }} className="w-full min-w-0 sm:w-[min(78vw,32rem)]"><textarea autoFocus value={editValue} onChange={(event) => setEditValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEditingMessageId(""); if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} maxLength={4000} className="min-h-28 w-full resize-y border border-[#10191b]/25 bg-[#fffdf8] p-3 text-sm leading-7 outline-none focus:border-[#10191b]/60" /><div className="mt-2 flex justify-end gap-2"><LiquidButton type="button" onClick={() => setEditingMessageId("")} className="min-h-9 border border-[#10191b]/20 px-3 text-xs">{ar ? "إلغاء" : "Cancel"}</LiquidButton><LiquidButton disabled={busy || cooldown > 0 || !editValue.trim()} className="min-h-9 bg-[#10191b] px-4 text-xs font-bold text-white disabled:opacity-40">{ar ? "إرسال التعديل" : "Send edit"}</LiquidButton></div></form> : <><p className="whitespace-pre-wrap break-words leading-7 [overflow-wrap:anywhere]">{message.content}</p><div className="mt-2 flex justify-end"><LiquidButton type="button" disabled={busy} onClick={() => { setEditingMessageId(message.id); setEditValue(message.content); }} className="focus-ring flex min-h-8 items-center gap-1.5 rounded-md border border-[#10191b]/20 px-2 text-[11px] text-[#10191b]/65 hover:bg-black/5"><Pencil size={13} />{ar ? "تعديل" : "Edit"}</LiquidButton></div></>}
-            {message.nodes && <div className="mt-5 flex flex-wrap gap-2 border-t border-white/8 pt-4">{message.nodes.map((node) => <span key={node.id} className={`flex items-center gap-1.5 border px-2.5 py-1 text-[10px] ${node.status === "done" ? "border-emerald-400/20 bg-emerald-400/5 text-emerald-200" : node.status === "error" ? "border-red-400/20 bg-red-400/5 text-red-200" : "border-white/10 text-white/35"}`}>{node.status === "done" ? <CheckCircle2 size={12} /> : <CircleDashed size={12} />}{node.label}{node.ms > 0 && ` · ${node.ms}ms`}</span>)}</div>}
-            {(message.code || message.codeResult) && <details className="mt-4 border border-violet-300/15 bg-violet-300/5 p-3"><summary className="flex cursor-pointer items-center gap-2 text-xs font-bold text-violet-200"><TerminalSquare size={14} />{ar ? "تنفيذ Python المعزول" : "Sandboxed Python execution"}</summary>{message.code && <pre className="mt-3 max-h-64 overflow-auto bg-black/25 p-3 text-[11px] leading-5 text-violet-100" dir="ltr"><code>{message.code}</code></pre>}{message.codeResult && <pre className="mt-2 max-h-52 overflow-auto border-t border-white/10 p-3 text-[11px] leading-5 text-white/60" dir="ltr">{message.codeResult}</pre>}</details>}
-            {message.caseMatches && message.caseMatches.length > 0 && <section className="mt-4 border border-[#b89555]/20 bg-[#b89555]/5 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xs font-bold text-[#e2c98f]">{ar ? `القضايا المشار إليها (${message.caseMatches.length})` : `Referenced cases (${message.caseMatches.length})`}</h3>{onOpenCases && <LiquidButton type="button" onClick={onOpenCases} className="focus-ring min-h-9 border border-[#b89555]/25 px-3 text-[10px] font-bold text-[#e2c98f] hover:bg-[#b89555]/10">{ar ? "فتح قسم القضايا" : "Open cases section"}</LiquidButton>}</div><div className="mt-3 grid gap-2">{message.caseMatches.map((item, index) => <details id={`case-${message.id}-${index + 1}`} key={item.id} className="scroll-mt-24 border border-white/10 bg-black/10 p-3 open:border-[#b89555]/40 open:bg-[#b89555]/5"><summary className="flex cursor-pointer flex-wrap items-center gap-2 text-xs font-bold"><span className="rounded-sm bg-[#b89555]/15 px-1.5 py-0.5 text-[#e2c98f]">[C{index + 1}]</span><span dir="ltr">{item.caseNumber}/{item.caseYear}</span><span className="text-white/45">{item.caseType} · {item.clientName}</span></summary><dl className="mt-3 grid gap-x-5 gap-y-2 border-t border-white/8 pt-3 text-[11px] leading-5 sm:grid-cols-2">{[[ar ? "المحكمة" : "Court", item.court], [ar ? "الحالة" : "Status", item.status], [ar ? "المتهم/الخصم" : "Accused/opponent", item.accusedName], [ar ? "المجني عليه" : "Victim", item.victimName], [ar ? "القاضي/الهيئة" : "Judge/panel", item.judgeName], [ar ? "الجلسة القادمة" : "Next hearing", item.nextHearing], [ar ? "الحكم" : "Judgment", item.judgment], [ar ? "الملاحظات" : "Notes", item.notes]].filter((entry) => entry[1]).map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-white/35">{label}</dt><dd className="break-words text-white/75">{value}</dd></div>)}</dl></details>)}</div></section>}
-            {message.sources && message.sources.length > 0 && <div className="mt-5"><h3 className="text-xs font-bold text-[#d0ad69]">{ar ? "مصادر البحث" : "Search sources"}</h3><div className="mt-2 grid gap-2">{message.sources.map((source) => { const favicon = faviconUrl(source.url); return <a key={source.url} href={source.url} target="_blank" rel="noreferrer noopener" className="focus-ring flex items-start gap-2 border border-white/8 p-3 text-xs text-white/65 hover:border-[#b89555]/40 hover:text-white">{favicon ? <Image src={favicon} alt="" width={16} height={16} unoptimized className="mt-0.5 size-4 shrink-0" /> : <ExternalLink className="mt-0.5 shrink-0" size={14} />}<span className="min-w-0 break-words">{source.title}</span><ExternalLink className="ms-auto mt-0.5 shrink-0 opacity-40" size={12} /></a>; })}</div></div>}
-            {message.images && message.images.length > 0 && <section className="mt-5"><h3 className="mb-2 flex items-center gap-2 text-xs font-bold text-[#d0ad69]"><ImageIcon size={14} />{ar ? "صور من نتائج البحث" : "Images from search"}</h3><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{message.images.map((image, index) => <SearchImageCard key={image.url} image={image} featured={index === 0 && message.images!.length > 2} ar={ar} />)}</div></section>}
-            {message.model && <p className="mt-4 text-[10px] text-white/25" dir="ltr">{message.model}</p>}
-            {message.role === "assistant" && message.id !== "welcome" && <div className="mt-3 flex items-center justify-end gap-1 border-t border-white/8 pt-2"><LiquidButton type="button" onClick={() => void copyAnswer(message)} title={ar ? "نسخ الإجابة" : "Copy answer"} aria-label={ar ? "نسخ الإجابة" : "Copy answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white">{copiedMessageId === message.id ? <Check className="text-emerald-300" size={16} /> : <Copy size={16} />}</LiquidButton><LiquidButton type="button" disabled={busy || cooldown > 0} onClick={() => retryAssistant(message.id, Date.now())} title={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} aria-label={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white disabled:opacity-30"><RotateCcw size={16} /></LiquidButton></div>}
-          </article>)}
-          {busy && <div className="me-auto flex max-w-[92%] items-center gap-3 border border-white/10 bg-white/[.045] p-3.5 text-sm text-white/55 sm:max-w-none sm:p-4"><LoaderCircle className="animate-spin text-[#d0ad69]" size={18} />{ar ? "يقرأ المرفقات ويبحث ويرتب الأدلة…" : "Reading attachments, searching and ranking evidence…"}</div>}
-          {error && <div className="flex gap-3 border border-red-400/20 bg-red-400/5 p-4 text-sm text-red-200"><ShieldAlert className="shrink-0" size={18} />{error}</div>}
-        </div>
-        <div className="shrink-0 border-t border-cyan-300/15 bg-[#0a252c] px-3 py-2.5 sm:px-4 sm:py-3">
-          <div className="mb-2 hidden items-center gap-2 text-[11px] font-bold text-cyan-200 sm:flex"><Sparkles size={14} />{ar ? "أسئلة سريعة لاختبار قوة الوكيل" : "Quick questions to test the agent"}</div>
-          <div className="flex snap-x gap-2 overflow-x-auto pb-1 [scrollbar-width:thin] xl:grid xl:grid-cols-5 xl:overflow-visible">
-            {quickQuestions[ar ? "ar" : "en"].map((item) => { const Icon = item.icon; return <LiquidButton key={item.label} type="button" disabled={busy || cooldown > 0} onClick={() => void sendQuestion(item.question, Date.now())} title={item.question} className="focus-ring flex min-h-10 min-w-[8rem] snap-start items-center justify-center gap-2 border border-cyan-300/25 bg-cyan-300/10 px-3 text-xs font-bold text-cyan-50 transition hover:border-cyan-200/60 hover:bg-cyan-300/20 disabled:opacity-40 xl:min-w-0"><Icon className="shrink-0 text-cyan-300" size={15} /><span>{item.label}</span></LiquidButton>; })}
+        <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-[#0c1c21]/95 px-2.5 backdrop-blur sm:h-auto sm:px-5 sm:py-4">
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[#b89555]/15 text-[#d0ad69] sm:size-11 sm:rounded-none"><Bot size={20} /></span>
+            <div className="min-w-0">
+              <h2 className="truncate text-[13px] font-bold sm:text-base">{ar ? "وكيل القضايا والقانون البحريني" : "Bahrain cases & law agent"}</h2>
+              <p className="hidden truncate text-[10px] text-white/40 sm:mt-1 sm:block sm:text-xs">RAG · Tavily · Gemini Multimodal</p>
+            </div>
           </div>
-        </div>
-        <form onSubmit={(event) => { event.preventDefault(); void sendQuestion(input, Date.now()); }} className="shrink-0 border-t border-white/10 bg-[#101d21] px-3 pb-[max(.75rem,env(safe-area-inset-bottom))] pt-3 sm:p-4">
-          {recentPrompts.length > 0 && <details className="group mb-3 border border-white/10 bg-black/10"><summary className="focus-ring flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 text-xs text-white/55"><span className="flex items-center gap-2"><History size={14} />{ar ? `آخر البرومبتات (${recentPrompts.length}/20)` : `Recent prompts (${recentPrompts.length}/20)`}</span><ChevronDown className="transition group-open:rotate-180" size={14} /></summary><div className="max-h-48 overflow-y-auto border-t border-white/10 p-1">{recentPrompts.map((prompt, index) => <LiquidButton key={`${prompt}-${index}`} type="button" onClick={(event) => { setInput(prompt); event.currentTarget.closest("details")?.removeAttribute("open"); }} className="focus-ring block min-h-10 w-full truncate border-b border-white/5 px-3 text-start text-[11px] text-white/50 hover:bg-white/5 hover:text-white" title={prompt}>{prompt}</LiquidButton>)}</div></details>}
-          {attachments.length > 0 && <div className="mb-3 flex gap-2 overflow-x-auto pb-1">{attachments.map((attachment) => <div key={attachment.id} className="relative flex min-w-44 max-w-60 items-center gap-2 border border-white/12 bg-white/[.055] p-2 pe-9">{attachment.previewUrl ? <Image src={attachment.previewUrl} alt="" width={40} height={40} unoptimized className="size-10 shrink-0 object-cover" /> : <FileText className="shrink-0 text-[#d0ad69]" size={20} />}<span className="min-w-0"><strong className="block truncate text-[11px]">{attachment.name}</strong><small className="text-[9px] text-white/35">{formatBytes(attachment.size)}</small></span><LiquidButton type="button" size="icon" onClick={() => removeAttachment(attachment.id)} aria-label={ar ? "إزالة المرفق" : "Remove attachment"} className="focus-ring absolute end-1 top-1 grid size-7 place-items-center text-white/40 hover:text-white"><X size={14} /></LiquidButton></div>)}</div>}
-          <div className="border border-white/12 bg-white/[.055] focus-within:border-[#b89555]/60">
-            <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={ar ? "اكتب، أرفق صورة أو PDF، أو استخدم الميكروفون…" : "Type, attach an image or PDF, or use the microphone…"} className="min-h-[48px] max-h-[34dvh] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-base leading-6 outline-none placeholder:text-white/30 sm:text-sm" maxLength={4000} />
-            <div className="flex items-center justify-between gap-2 px-2 pb-2"><div className="flex items-center gap-1"><input ref={fileInputRef} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,application/json,.txt,.md,.csv,.json,.pdf" onChange={(event) => addAttachments(event.target.files)} className="hidden" /><LiquidButton type="button" size="icon" disabled={busy || attachments.length >= maxFiles} onClick={() => fileInputRef.current?.click()} aria-label={ar ? "إرفاق صور أو ملفات" : "Attach images or files"} title={ar ? "صور، PDF وملفات نصية — حتى 50MB" : "Images, PDF and text — up to 50MB"} className="focus-ring grid size-10 place-items-center text-white/55 hover:bg-white/5 hover:text-white disabled:opacity-30"><Paperclip size={18} /></LiquidButton><LiquidButton type="button" size="icon" disabled={busy} onClick={() => void toggleVoice()} aria-label={listening ? (ar ? "إيقاف التسجيل" : "Stop recording") : (ar ? "إملاء صوتي" : "Voice dictation")} className={`focus-ring grid size-10 place-items-center transition ${listening ? "bg-red-500/15 text-red-300" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>{listening ? <MicOff className="animate-pulse" size={18} /> : <Mic size={18} />}</LiquidButton>{listening && <span className="text-[10px] text-red-300">{ar ? "أستمع الآن…" : "Listening…"}</span>}</div>{busy ? <LiquidButton type="button" onClick={stopGeneration} aria-label={ar ? "إيقاف النموذج" : "Stop model"} className="focus-ring flex min-h-11 shrink-0 items-center gap-2 bg-red-500/15 px-3 text-xs font-bold text-red-200 hover:bg-red-500/25"><Square size={14} fill="currentColor" />{ar ? "إيقاف" : "Stop"}</LiquidButton> : <LiquidButton disabled={cooldown > 0 || (input.trim().length < 3 && attachments.length === 0)} aria-label={ar ? "إرسال السؤال" : "Send question"} className="focus-ring grid size-11 shrink-0 place-items-center bg-[#b89555] text-[#10191b] disabled:opacity-40">{cooldown > 0 ? <span className="text-sm font-black">{cooldown}</span> : <Send size={19} />}</LiquidButton>}</div>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <LiquidButton type="button" onClick={() => setMobileHistoryOpen(true)} aria-label={ar ? "المحادثات السابقة" : "Chat history"} title={ar ? "المحادثات السابقة" : "Chat history"} className="focus-ring grid size-10 place-items-center rounded-full text-white/55 hover:bg-white/5 hover:text-white xl:hidden"><History size={18} /></LiquidButton>
+            <LiquidButton onClick={() => { setMobileHistoryOpen(false); newConversation(); }} aria-label={ar ? "محادثة جديدة" : "New chat"} title={ar ? "محادثة جديدة" : "New chat"} className="focus-ring grid size-10 place-items-center rounded-full text-white/55 hover:bg-white/5 hover:text-white sm:flex sm:w-auto sm:gap-2 sm:px-2"><NewChatIcon className="text-lg" /><span className="hidden sm:inline">{ar ? "محادثة جديدة" : "New chat"}</span></LiquidButton>
           </div>
-          <div className="mt-2 flex items-center justify-between gap-2"><label className="flex cursor-pointer items-center gap-2 text-xs text-white/55"><input type="checkbox" checked={webSearch} onChange={(event) => setWebSearch(event.target.checked)} className="size-4 shrink-0" /><Globe2 className="shrink-0" size={14} />{ar ? "بحث Tavily في المصادر الرسمية" : "Tavily official-source search"}</label><span className="hidden text-[10px] text-white/25 sm:inline">{ar ? "5 ملفات · 50MB · مهلة 10 ثوانٍ" : "5 files · 50MB · 10-second cooldown"}</span></div>
+        </header>
+
+        <div className="relative min-h-0 min-w-0 flex-1">
+          <div className="h-full min-h-0 min-w-0 space-y-5 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4 pb-4 [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable] sm:p-6">
+            {messages.map((message) => {
+              const isTyping = message.role === "assistant" && typingMessageId === message.id;
+              const isStoppedPartial = message.role === "assistant" && stoppedTyping?.id === message.id;
+              const visibleContent = isTyping
+                ? message.content.slice(0, typingLength)
+                : isStoppedPartial
+                  ? message.content.slice(0, stoppedTyping.length)
+                  : message.content;
+              const answerSettled = !isTyping && !isStoppedPartial;
+
+              return (
+              <article
+                key={message.id}
+                dir="auto"
+                className={message.role === "user"
+                  ? "ms-auto w-fit max-w-[88%] overflow-hidden rounded-[1.4rem] rounded-ee-md bg-[#b89555] px-4 py-3 !text-white [overflow-wrap:anywhere] sm:max-w-[min(82%,48rem)] sm:rounded-none"
+                  : "mx-auto w-full max-w-4xl min-w-0 overflow-hidden break-words bg-transparent px-1 py-1 [overflow-wrap:anywhere] sm:border sm:border-white/10 sm:bg-white/[.045] sm:p-6"}
+              >
+                {message.attachments && message.attachments.length > 0 && <MessageAttachments attachments={message.attachments} ar={ar} />}
+                {message.role === "assistant" ? (
+                  <div className="min-w-0 break-words [overflow-wrap:anywhere] [&_a]:break-all [&_code]:break-words [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
+                    <MarkdownAnswer images={answerSettled ? message.images : undefined}>{linkCaseCitations(visibleContent, message.id, answerSettled ? (message.caseMatches?.length ?? 0) : 0)}</MarkdownAnswer>
+                    {isTyping && (
+                      <motion.span
+                        aria-hidden="true"
+                        className="ms-1 inline-block h-4 w-[2px] rounded-full bg-[#d0ad69] align-middle shadow-[0_0_10px_rgba(208,173,105,.55)]"
+                        animate={{ opacity: [0.25, 1, 0.25] }}
+                        transition={{ duration: 0.72, repeat: Infinity, ease: "easeInOut" }}
+                      />
+                    )}
+                    <AnimatePresence initial={false}>
+                      {isStoppedPartial && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                          transition={{ duration: 0.18, ease: "easeOut" }}
+                          className="mt-3"
+                        >
+                          <LiquidButton
+                            type="button"
+                            onClick={() => setStoppedTyping((current) => current?.id === message.id ? null : current)}
+                            className="focus-ring inline-flex min-h-9 items-center gap-2 rounded-full border border-[#b89555]/25 bg-[#b89555]/8 px-3 text-[11px] font-bold text-[#e2c98f] hover:bg-[#b89555]/14"
+                            aria-label={ar ? "عرض الإجابة كاملة" : "Show full answer"}
+                          >
+                            <ChevronDown size={14} />
+                            {ar ? "عرض الإجابة كاملة" : "Show full answer"}
+                          </LiquidButton>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                ) : editingMessageId === message.id ? (
+                  <form onSubmit={(event) => { event.preventDefault(); if (editValue.trim().length >= 1) void rerunUserMessage(message.id, Date.now(), editValue.trim()); }} className="w-full min-w-0 sm:w-[min(78vw,32rem)]">
+                    <textarea autoFocus value={editValue} onChange={(event) => setEditValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEditingMessageId(""); if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} maxLength={4000} className="min-h-28 w-full resize-y rounded-xl border border-[#10191b]/25 bg-[#fffdf8] p-3 text-sm leading-7 outline-none focus:border-[#10191b]/60" />
+                    <div className="mt-2 flex justify-end gap-2"><LiquidButton type="button" onClick={() => setEditingMessageId("")} className="min-h-9 border border-[#10191b]/20 px-3 text-xs">{ar ? "إلغاء" : "Cancel"}</LiquidButton><LiquidButton disabled={responseActive || cooldown > 0 || !editValue.trim()} className="min-h-9 bg-[#10191b] px-4 text-xs font-bold text-white disabled:opacity-40">{ar ? "إرسال التعديل" : "Send edit"}</LiquidButton></div>
+                  </form>
+                ) : (
+                  <><p className="whitespace-pre-wrap break-words leading-7 [overflow-wrap:anywhere]">{message.content}</p><div className="mt-2 flex justify-end"><LiquidButton type="button" disabled={responseActive} onClick={() => { setEditingMessageId(message.id); setEditValue(message.content); }} className="focus-ring flex min-h-8 items-center gap-1.5 rounded-md border border-[#10191b]/20 px-2 text-[11px] text-[#10191b]/65 hover:bg-black/5"><Pencil size={13} />{ar ? "تعديل" : "Edit"}</LiquidButton></div></>
+                )}
+                {answerSettled && message.nodes && <div className="mt-5 flex flex-wrap gap-2 border-t border-white/8 pt-4">{message.nodes.map((node) => <span key={node.id} className={`flex items-center gap-1.5 border px-2.5 py-1 text-[10px] ${node.status === "done" ? "border-emerald-400/20 bg-emerald-400/5 text-emerald-200" : node.status === "error" ? "border-red-400/20 bg-red-400/5 text-red-200" : "border-white/10 text-white/35"}`}>{node.status === "done" ? <CheckCircle2 size={12} /> : <CircleDashed size={12} />}{node.label}{node.ms > 0 && ` · ${node.ms}ms`}</span>)}</div>}
+                {answerSettled && (message.code || message.codeResult) && <details className="mt-4 border border-violet-300/15 bg-violet-300/5 p-3"><summary className="flex cursor-pointer items-center gap-2 text-xs font-bold text-violet-200"><TerminalSquare size={14} />{ar ? "تنفيذ Python المعزول" : "Sandboxed Python execution"}</summary>{message.code && <pre className="mt-3 max-h-64 max-w-full overflow-auto bg-black/25 p-3 text-[11px] leading-5 text-violet-100" dir="ltr"><code>{message.code}</code></pre>}{message.codeResult && <pre className="mt-2 max-h-52 max-w-full overflow-auto border-t border-white/10 p-3 text-[11px] leading-5 text-white/60" dir="ltr">{message.codeResult}</pre>}</details>}
+                {answerSettled && message.caseMatches && message.caseMatches.length > 0 && <section className="mt-4 border border-[#b89555]/20 bg-[#b89555]/5 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xs font-bold text-[#e2c98f]">{ar ? `القضايا المشار إليها (${message.caseMatches.length})` : `Referenced cases (${message.caseMatches.length})`}</h3>{onOpenCases && <LiquidButton type="button" onClick={onOpenCases} className="focus-ring min-h-9 border border-[#b89555]/25 px-3 text-[10px] font-bold text-[#e2c98f] hover:bg-[#b89555]/10">{ar ? "فتح قسم القضايا" : "Open cases section"}</LiquidButton>}</div><div className="mt-3 grid gap-2">{message.caseMatches.map((item, index) => <details id={`case-${message.id}-${index + 1}`} key={item.id} className="scroll-mt-24 border border-white/10 bg-black/10 p-3 open:border-[#b89555]/40 open:bg-[#b89555]/5"><summary className="flex cursor-pointer flex-wrap items-center gap-2 text-xs font-bold"><span className="rounded-sm bg-[#b89555]/15 px-1.5 py-0.5 text-[#e2c98f]">[C{index + 1}]</span><span dir="ltr">{item.caseNumber}/{item.caseYear}</span><span className="min-w-0 break-words text-white/45">{item.caseType} · {item.clientName}</span></summary><dl className="mt-3 grid gap-x-5 gap-y-2 border-t border-white/8 pt-3 text-[11px] leading-5 sm:grid-cols-2">{[[ar ? "المحكمة" : "Court", item.court], [ar ? "الحالة" : "Status", item.status], [ar ? "المتهم/الخصم" : "Accused/opponent", item.accusedName], [ar ? "المجني عليه" : "Victim", item.victimName], [ar ? "القاضي/الهيئة" : "Judge/panel", item.judgeName], [ar ? "الجلسة القادمة" : "Next hearing", item.nextHearing], [ar ? "الحكم" : "Judgment", item.judgment], [ar ? "الملاحظات" : "Notes", item.notes]].filter((entry) => entry[1]).map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-white/35">{label}</dt><dd className="break-words text-white/75">{value}</dd></div>)}</dl></details>)}</div></section>}
+                {answerSettled && message.sources && message.sources.length > 0 && <details className="mt-5 border border-white/8 bg-white/[.02] p-3"><summary className="cursor-pointer text-xs font-bold text-[#d0ad69]">{ar ? `مصادر البحث (${message.sources.length})` : `Search sources (${message.sources.length})`}</summary><div className="mt-2 grid gap-2">{message.sources.map((source) => { const favicon = faviconUrl(source.url); return <a key={source.url} href={source.url} target="_blank" rel="noreferrer noopener" className="focus-ring flex min-w-0 items-start gap-2 border border-white/8 p-3 text-xs text-white/65 hover:border-[#b89555]/40 hover:text-white">{favicon ? <Image src={favicon} alt="" width={16} height={16} unoptimized className="mt-0.5 size-4 shrink-0" /> : <ExternalLink className="mt-0.5 shrink-0" size={14} />}<span className="min-w-0 break-words [overflow-wrap:anywhere]">{source.title}</span><ExternalLink className="ms-auto mt-0.5 shrink-0 opacity-40" size={12} /></a>; })}</div></details>}
+                {answerSettled && message.images && message.images.length > 0 && <details className="mt-5 border border-white/8 bg-white/[.02] p-3"><summary className="flex cursor-pointer items-center gap-2 text-xs font-bold text-[#d0ad69]"><ImageIcon size={14} />{ar ? `صور من نتائج البحث (${message.images.length})` : `Images from search (${message.images.length})`}</summary><div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">{message.images.map((image, index) => <SearchImageCard key={image.url} image={image} featured={index === 0 && message.images!.length > 2} ar={ar} />)}</div></details>}
+                {answerSettled && message.model && <p className="mt-4 text-[10px] text-white/25" dir="ltr">{message.model}</p>}
+                {answerSettled && message.role === "assistant" && message.id !== "welcome" && <div className="mt-3 flex items-center justify-end gap-1 border-t border-white/8 pt-2"><LiquidButton type="button" onClick={() => void copyAnswer(message)} title={ar ? "نسخ الإجابة" : "Copy answer"} aria-label={ar ? "نسخ الإجابة" : "Copy answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white">{copiedMessageId === message.id ? <Check className="text-emerald-300" size={16} /> : <Copy size={16} />}</LiquidButton><LiquidButton type="button" disabled={responseActive || cooldown > 0} onClick={() => retryAssistant(message.id, Date.now())} title={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} aria-label={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white disabled:opacity-30"><RotateCcw size={16} /></LiquidButton></div>}
+              </article>
+              );
+            })}
+
+            {busy && <div className="mx-auto flex w-full max-w-4xl items-center gap-3 px-1 py-2 text-sm text-white/55"><LoaderCircle className="animate-spin text-[#d0ad69]" size={18} />{ar ? "يقرأ المرفقات ويبحث ويرتب الأدلة…" : "Reading attachments, searching and ranking evidence…"}</div>}
+            <div ref={messagesEndRef} className="h-px" aria-hidden="true" />
+          </div>
+
+          {error && (
+            <div className="pointer-events-none absolute inset-x-2 top-2 z-30 flex justify-center sm:inset-x-4">
+              <div role="alert" className="pointer-events-auto flex w-full max-w-xl items-start gap-2 rounded-xl border border-red-400/25 bg-[#281417]/95 px-3 py-2.5 text-xs leading-5 text-red-100 shadow-2xl backdrop-blur">
+                <ShieldAlert className="mt-0.5 shrink-0" size={16} />
+                <span className="min-w-0 flex-1">{error}</span>
+                <LiquidButton type="button" onClick={() => setError("")} aria-label={ar ? "إغلاق الخطأ" : "Dismiss error"} className="grid size-7 shrink-0 place-items-center rounded-full text-red-100/60 hover:bg-white/5 hover:text-white"><X size={14} /></LiquidButton>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <form onSubmit={(event) => { event.preventDefault(); setMobileToolsOpen(false); void sendQuestion(input, Date.now()); }} className="relative shrink-0 border-t border-white/8 bg-[#0c1c21]/98 px-2.5 pb-[max(.65rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur sm:p-4">
+          {mobileToolsOpen && (
+            <div className="mb-2 rounded-2xl border border-white/10 bg-[#101d21] p-2 shadow-2xl xl:hidden">
+              {recentPrompts.length > 0 && <details className="group rounded-xl border border-white/8 bg-black/10"><summary className="focus-ring flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 text-xs text-white/65"><span className="flex items-center gap-2"><History size={14} />{ar ? `آخر البرومبتات (${recentPrompts.length}/20)` : `Recent prompts (${recentPrompts.length}/20)`}</span><ChevronDown className="transition group-open:rotate-180" size={14} /></summary><div className="max-h-40 overflow-y-auto border-t border-white/8 p-1">{recentPrompts.map((prompt, index) => <LiquidButton key={`${prompt}-${index}`} type="button" onClick={() => { setInput(prompt); setMobileToolsOpen(false); }} className="focus-ring block min-h-10 w-full truncate rounded-lg px-3 text-start text-[11px] text-white/55 hover:bg-white/5 hover:text-white" title={prompt}>{prompt}</LiquidButton>)}</div></details>}
+              <label className="mt-2 flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/8 px-3 text-xs text-white/65"><span className="flex items-center gap-2"><Globe2 size={15} />{ar ? "البحث في المصادر الرسمية" : "Official-source web search"}</span><input type="checkbox" checked={webSearch} onChange={(event) => setWebSearch(event.target.checked)} className="size-4 shrink-0" /></label>
+              <p className="px-3 pt-2 text-[10px] text-white/30">{ar ? "حتى 5 ملفات · 50MB · مهلة 10 ثوانٍ" : "Up to 5 files · 50MB · 10-second cooldown"}</p>
+            </div>
+          )}
+
+          {recentPrompts.length > 0 && <div className="mb-2 hidden xl:block"><details className="group border border-white/10 bg-black/10"><summary className="focus-ring flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 text-xs text-white/55"><span className="flex items-center gap-2"><History size={14} />{ar ? `آخر البرومبتات (${recentPrompts.length}/20)` : `Recent prompts (${recentPrompts.length}/20)`}</span><ChevronDown className="transition group-open:rotate-180" size={14} /></summary><div className="max-h-48 overflow-y-auto border-t border-white/10 p-1">{recentPrompts.map((prompt, index) => <LiquidButton key={`${prompt}-${index}`} type="button" onClick={(event) => { setInput(prompt); event.currentTarget.closest("details")?.removeAttribute("open"); }} className="focus-ring block min-h-10 w-full truncate border-b border-white/5 px-3 text-start text-[11px] text-white/50 hover:bg-white/5 hover:text-white" title={prompt}>{prompt}</LiquidButton>)}</div></details></div>}
+
+          {attachments.length > 0 && <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{attachments.map((attachment) => <div key={attachment.id} className="relative flex min-w-40 max-w-56 items-center gap-2 rounded-xl border border-white/12 bg-white/[.055] p-2 pe-8">{attachment.previewUrl ? <Image src={attachment.previewUrl} alt="" width={40} height={40} unoptimized className="size-9 shrink-0 rounded-lg object-cover" /> : <FileText className="shrink-0 text-[#d0ad69]" size={20} />}<span className="min-w-0"><strong className="block truncate text-[11px]">{attachment.name}</strong><small className="text-[9px] text-white/35">{formatBytes(attachment.size)}</small></span><LiquidButton type="button" size="icon" onClick={() => removeAttachment(attachment.id)} aria-label={ar ? "إزالة المرفق" : "Remove attachment"} className="focus-ring absolute end-0.5 top-0.5 grid size-7 place-items-center rounded-full text-white/40 hover:text-white"><X size={14} /></LiquidButton></div>)}</div>}
+
+          {messages.length <= 1 && (
+            <div className="mx-auto mb-2 w-full max-w-4xl">
+              <div className="mb-1 flex items-center gap-1 px-0.5 text-[8px] font-bold leading-none text-cyan-200 sm:mb-1.5 sm:gap-1.5 sm:text-[10px]"><Sparkles size={12} className="sm:size-[14px]" />{ar ? "جرّب سؤالاً سريعاً" : "Try a quick question"}</div>
+              <div className="grid grid-cols-3 gap-1 pb-0.5 sm:flex sm:snap-x sm:gap-2 sm:overflow-x-auto sm:pb-1 sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden xl:grid xl:grid-cols-5 xl:overflow-visible">
+                {quickQuestions[ar ? "ar" : "en"].map((item) => { const Icon = item.icon; return <LiquidButton key={item.label} type="button" disabled={responseActive || cooldown > 0} onClick={() => void sendQuestion(item.question, Date.now())} title={item.question} className="focus-ring flex min-h-[2rem] min-w-0 items-center justify-center gap-1 rounded-xl border border-cyan-300/20 bg-cyan-300/5 px-1 py-0.5 text-[8px] font-bold leading-[1.15] text-cyan-50 transition hover:border-cyan-200/50 hover:bg-cyan-300/10 disabled:opacity-40 sm:min-h-9 sm:min-w-[8rem] sm:snap-start sm:gap-1.5 sm:rounded-full sm:px-2.5 sm:py-1 sm:text-[10px] xl:min-w-0 xl:rounded-none"><Icon className="size-3 shrink-0 text-cyan-300 sm:size-[13px]" /><span className="line-clamp-2 text-center">{item.label}</span></LiquidButton>; })}
+              </div>
+            </div>
+          )}
+
+          <div className="mx-auto w-full max-w-4xl rounded-[1.55rem] border border-white/12 bg-white/[.06] p-1.5 shadow-[0_-8px_30px_rgba(0,0,0,.12)] transition focus-within:border-[#b89555]/55">
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
+              enterKeyHint="send"
+              placeholder={ar ? "اسأل عن قضية أو قانون…" : "Ask about a case or law…"}
+              className="block min-h-11 max-h-[10.5rem] w-full resize-none overflow-y-auto bg-transparent px-3.5 py-2.5 text-base leading-6 outline-none placeholder:text-white/30 sm:text-sm"
+              maxLength={4000}
+            />
+            <div className="flex items-center justify-between gap-1 px-1 pb-0.5">
+              <div className="flex min-w-0 items-center gap-0.5">
+                <input ref={fileInputRef} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,application/json,.txt,.md,.csv,.json,.pdf" onChange={(event) => addAttachments(event.target.files)} className="hidden" />
+                <LiquidButton type="button" size="icon" disabled={responseActive || attachments.length >= maxFiles} onClick={() => fileInputRef.current?.click()} aria-label={ar ? "إرفاق صور أو ملفات" : "Attach images or files"} title={ar ? "صور، PDF وملفات نصية — حتى 50MB" : "Images, PDF and text — up to 50MB"} className="focus-ring grid size-10 place-items-center rounded-full text-white/55 hover:bg-white/5 hover:text-white disabled:opacity-30"><Paperclip size={18} /></LiquidButton>
+                <LiquidButton type="button" size="icon" disabled={responseActive} onClick={() => void toggleVoice()} aria-label={listening ? (ar ? "إيقاف التسجيل" : "Stop recording") : (ar ? "إملاء صوتي" : "Voice dictation")} title={ar ? "الإملاء الصوتي" : "Voice dictation"} className={`focus-ring grid size-10 place-items-center rounded-full transition ${listening ? "bg-red-500/15 text-red-300" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>{listening ? <MicOff className="animate-pulse" size={18} /> : <Mic size={18} />}</LiquidButton>
+                <LiquidButton type="button" onClick={() => setMobileToolsOpen((current) => !current)} aria-expanded={mobileToolsOpen} aria-label={ar ? "أدوات إضافية" : "More tools"} className={`focus-ring grid size-10 place-items-center rounded-full xl:hidden ${mobileToolsOpen ? "bg-white/10 text-white" : "text-white/55 hover:bg-white/5 hover:text-white"}`}><Sparkles size={17} /></LiquidButton>
+                <label className="hidden cursor-pointer items-center gap-2 rounded-full border border-white/10 px-3 py-2 text-[11px] text-white/55 xl:flex"><input type="checkbox" checked={webSearch} onChange={(event) => setWebSearch(event.target.checked)} className="size-3.5 shrink-0" /><Globe2 size={13} />{ar ? "Tavily" : "Tavily"}</label>
+                {listening && <span className="hidden text-[10px] text-red-300 sm:inline">{ar ? "أستمع الآن…" : "Listening…"}</span>}
+              </div>
+              {responseActive ? <LiquidButton type="button" onClick={stopGeneration} aria-label={ar ? "إيقاف النموذج" : "Stop model"} className="focus-ring grid size-10 shrink-0 place-items-center rounded-full bg-white text-black hover:bg-white/90"><Square size={14} fill="currentColor" /></LiquidButton> : <LiquidButton disabled={cooldown > 0 || (input.trim().length < 3 && attachments.length === 0)} aria-label={ar ? "إرسال السؤال" : "Send question"} className="focus-ring grid size-10 shrink-0 place-items-center rounded-full bg-[#b89555] text-[#10191b] disabled:opacity-35">{cooldown > 0 ? <span className="text-xs font-black">{cooldown}</span> : <Send size={18} />}</LiquidButton>}
+            </div>
+          </div>
+          <p className="mx-auto mt-1.5 hidden max-w-4xl text-center text-[9px] text-white/20 sm:block">{ar ? "تحقق من النصوص الرسمية وملف القضية قبل اعتماد أي إجراء." : "Verify official texts and the case file before relying on any action."}</p>
         </form>
       </div>
-      {mobileHistoryOpen && <button type="button" aria-label={ar ? "إغلاق سجل المحادثات" : "Close chat history"} onClick={() => setMobileHistoryOpen(false)} className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[1px] xl:hidden" />}
-      <aside className={`fixed inset-y-0 end-0 z-50 w-[min(88vw,22rem)] overflow-y-auto border-s border-white/10 bg-[#0b171b] p-5 shadow-2xl transition-transform duration-200 xl:static xl:z-auto xl:w-auto xl:translate-x-0 xl:border-s xl:border-t-0 xl:bg-white/[.025] xl:shadow-none ${mobileHistoryOpen ? "translate-x-0" : ar ? "-translate-x-full" : "translate-x-full"}`}>
-        <div className="mb-3 flex items-center justify-end xl:hidden"><LiquidButton type="button" onClick={() => setMobileHistoryOpen(false)} aria-label={ar ? "إغلاق" : "Close"} className="focus-ring grid size-10 place-items-center text-white/55 hover:bg-white/5 hover:text-white"><X size={18} /></LiquidButton></div>
+
+      {mobileHistoryOpen && <button type="button" aria-label={ar ? "إغلاق سجل المحادثات" : "Close chat history"} onClick={() => setMobileHistoryOpen(false)} className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px] xl:hidden" />}
+      <aside className={`fixed inset-y-0 end-0 z-50 w-[min(90vw,22rem)] overflow-y-auto border-s border-white/10 bg-[#0b171b] p-5 shadow-2xl transition-transform duration-200 xl:static xl:z-auto xl:w-auto xl:translate-x-0 xl:border-s xl:border-t-0 xl:bg-white/[.025] xl:shadow-none ${mobileHistoryOpen ? "translate-x-0" : ar ? "-translate-x-full" : "translate-x-full"}`}>
+        <div className="mb-3 flex items-center justify-end xl:hidden"><LiquidButton type="button" onClick={() => setMobileHistoryOpen(false)} aria-label={ar ? "إغلاق" : "Close"} className="focus-ring grid size-10 place-items-center rounded-full text-white/55 hover:bg-white/5 hover:text-white"><X size={18} /></LiquidButton></div>
         <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><History className="text-[#d0ad69]" size={18} /><h3 className="font-bold">{ar ? "المحادثات السابقة" : "Chat history"}</h3></div><span className="text-[10px] text-white/30">{conversations.length}</span></div>
         <p className="mt-2 text-[10px] leading-5 text-white/35">{ar ? "لا تدخل في سياق محادثة جديدة إلا إذا سألت عنها صراحةً." : "Not used in a new chat unless you explicitly ask about it."}</p>
-        <div className="mt-3 max-h-52 space-y-1 overflow-y-auto pe-1">{conversations.length ? conversations.map((conversation) => <div key={conversation.id} className={`group flex items-center border ${conversation.id === conversationId ? "border-[#b89555]/40 bg-[#b89555]/10" : "border-transparent hover:bg-white/[.035]"}`}><LiquidButton type="button" onClick={() => { openConversation(conversation); setMobileHistoryOpen(false); }} className="focus-ring min-w-0 flex-1 p-2 text-start"><strong className="block truncate text-[11px] text-white/70">{conversation.title}</strong><small className="mt-1 block text-[9px] text-white/25">{new Intl.DateTimeFormat(ar ? "ar-BH" : "en", { dateStyle: "short", timeStyle: "short" }).format(conversation.updatedAt)}</small></LiquidButton><LiquidButton type="button" size="icon" onClick={() => void deleteConversation(conversation.id)} aria-label={ar ? "حذف المحادثة" : "Delete conversation"} className="focus-ring grid size-8 shrink-0 place-items-center text-white/25 hover:text-red-300"><Trash2 size={13} /></LiquidButton></div>) : <p className="py-4 text-center text-[10px] text-white/25">{ar ? "لا توجد محادثات محفوظة بعد" : "No saved conversations yet"}</p>}</div>
-        <details className="mt-4 border border-white/10 bg-white/[.02] p-3"><summary className="cursor-pointer text-[11px] font-bold text-[#d0ad69]">{ar ? `المهارات القضائية الأساسية (${agentSkills.length})` : `Core legal skills (${agentSkills.length})`}</summary><ul className="mt-3 space-y-2 text-[10px] leading-5 text-white/45">{agentSkills.map((skill) => <li key={skill.id} className="border-t border-white/8 pt-2">{skill.title}</li>)}</ul></details>
+        <div className="mt-3 max-h-[42dvh] space-y-1 overflow-y-auto pe-1">{conversations.length ? conversations.map((conversation) => <div key={conversation.id} className={`group flex items-center rounded-lg border ${conversation.id === conversationId ? "border-[#b89555]/40 bg-[#b89555]/10" : "border-transparent hover:bg-white/[.035]"}`}><LiquidButton type="button" onClick={() => { openConversation(conversation); setMobileHistoryOpen(false); }} className="focus-ring min-w-0 flex-1 p-2 text-start"><strong className="block truncate text-[11px] text-white/70">{conversation.title}</strong><small className="mt-1 block text-[9px] text-white/25">{new Intl.DateTimeFormat(ar ? "ar-BH" : "en", { dateStyle: "short", timeStyle: "short" }).format(conversation.updatedAt)}</small></LiquidButton><LiquidButton type="button" size="icon" onClick={() => void deleteConversation(conversation.id)} aria-label={ar ? "حذف المحادثة" : "Delete conversation"} className="focus-ring grid size-8 shrink-0 place-items-center rounded-full text-white/25 hover:text-red-300"><Trash2 size={13} /></LiquidButton></div>) : <p className="py-4 text-center text-[10px] text-white/25">{ar ? "لا توجد محادثات محفوظة بعد" : "No saved conversations yet"}</p>}</div>
+        <details className="mt-4 rounded-xl border border-white/10 bg-white/[.02] p-3"><summary className="cursor-pointer text-[11px] font-bold text-[#d0ad69]">{ar ? `المهارات القضائية الأساسية (${agentSkills.length})` : `Core legal skills (${agentSkills.length})`}</summary><ul className="mt-3 space-y-2 text-[10px] leading-5 text-white/45">{agentSkills.map((skill) => <li key={skill.id} className="border-t border-white/8 pt-2">{skill.title}</li>)}</ul></details>
         <div className="my-5 border-t border-white/10" />
         <div className="flex items-center gap-3 xl:block"><Sparkles className="shrink-0 text-[#d0ad69]" /><h3 className="font-bold xl:mt-4">{ar ? "طريقة عمل الوكيل" : "Agent pipeline"}</h3></div><ol className="mt-5 grid gap-4 text-xs leading-6 text-white/50 sm:grid-cols-2 xl:grid-cols-1"><li><strong className="block text-white/75">01 · Firebase Auth</strong>{ar ? "يتحقق من هوية وبريد الأدمن." : "Verifies administrator identity."}</li><li><strong className="block text-white/75">02 · Case RAG</strong>{ar ? "يرتب القضايا حسب صلتها بالسؤال." : "Ranks cases by relevance."}</li><li><strong className="block text-white/75">03 · Tavily</strong>{ar ? "يجلب مصادر وصورًا بحرينية رسمية." : "Fetches official Bahrain sources and images."}</li><li><strong className="block text-white/75">04 · Attachments</strong>{ar ? "يرفع الملفات الكبيرة ويقرأ PDF كاملًا." : "Uploads large files and reads complete PDFs."}</li><li><strong className="block text-white/75">05 · Python Sandbox</strong>{ar ? "ينفذ الحسابات والتحليل البرمجي في بيئة معزولة." : "Runs calculations and code analysis in an isolated environment."}</li><li><strong className="block text-white/75">06 · Gemini</strong>{ar ? "يطبق المهارات القضائية ويصوغ الإجابة." : "Applies legal skills and drafts the answer."}</li></ol><div className="mt-5 border-s-2 border-amber-400/60 bg-amber-400/5 p-4 text-xs leading-6 text-amber-100/70 xl:mt-7">{ar ? "المرفقات القانونية قد تكون حساسة. راجع النص الرسمي وملف القضية قبل اعتماد أي رأي أو إجراء." : "Legal attachments may be sensitive. Review official law and the full case file before relying on any conclusion or action."}</div>
       </aside>
     </section>
   );
+
 }

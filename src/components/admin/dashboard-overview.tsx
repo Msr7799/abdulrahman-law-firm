@@ -5,18 +5,21 @@ import {
   BriefcaseBusiness,
   Bot,
   ExternalLink,
+  Landmark,
   FileCheck2,
   Phone,
   PhoneCall,
   Route,
 } from "lucide-react";
 import type { Locale } from "@/config/site";
+import { LegalNewsOverview } from "@/components/admin/legal-news-overview";
 import {
   dashboardGuide,
   importantLawyerContacts,
 } from "@/data/judicial-roadmap";
 
 const icons = {
+  integrations: Landmark,
   roadmap: Route,
   forms: FileCheck2,
   cases: BriefcaseBusiness,
@@ -29,7 +32,7 @@ export function DashboardOverview({
   onOpen,
 }: {
   locale: Locale;
-  onOpen: (id: "roadmap" | "forms" | "cases" | "directory" | "agent") => void;
+  onOpen: (id: "integrations" | "roadmap" | "forms" | "cases" | "directory" | "agent") => void;
 }) {
   const ar = locale === "ar";
   return (
@@ -78,6 +81,8 @@ export function DashboardOverview({
         </div>
       </div>
 
+      <LegalNewsOverview locale={locale} />
+
       <div>
         <div className="mb-4 flex items-end justify-between gap-4">
           <div>
@@ -91,10 +96,10 @@ export function DashboardOverview({
             </h2>
           </div>
           <span className="text-xs text-white/30">
-            5 {ar ? "أقسام تشغيلية" : "work areas"}
+            6 {ar ? "أقسام تشغيلية" : "work areas"}
           </span>
         </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
           {dashboardGuide.map((item, index) => {
             const Icon = icons[item.id];
             return (

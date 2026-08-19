@@ -6,6 +6,7 @@ import { ServicesGrid } from "@/components/home/services-grid";
 import { ServicesVisuals } from "@/components/home/services-visuals";
 import { MinistryJusticeBanner } from "@/components/home/ministry-justice-banner";
 import { BahrainFeature } from "@/components/home/bahrain-feature";
+import { LegalNewsSection } from "@/components/news/legal-news-section";
 import { OfficeCard } from "@/components/office/office-card";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { ButtonLink } from "@/components/ui/button-link";
@@ -24,6 +25,7 @@ export default async function Home({
   return (
     <main id="main">
       <Hero locale={locale} />
+      <LegalNewsSection locale={locale} />
       <section className="reveal-section py-24">
         <div className="container-site grid items-center gap-12 lg:grid-cols-2">
           <div className="relative mx-auto w-full max-w-md">

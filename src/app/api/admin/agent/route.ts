@@ -8,6 +8,7 @@ import { roadmapKnowledgeForAgent } from "@/data/judicial-roadmap";
 import { agentSkillsForPrompt } from "@/data/agent-skills";
 import { signedAgentImagePath } from "@/lib/agent-image";
 import { cacheRemoteAgentImage } from "@/lib/agent-image-cache";
+import { getLegalNews, isLegalNewsQuery, legalNewsForAgent, periodFromQuery } from "@/lib/legal-news";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -207,7 +208,7 @@ ${roadmapKnowledgeForAgent()}`;
 }
 
 function modelList() {
-  return (process.env.GEMINI_MODELS ?? "gemini-3.5-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash").split(",").map((model) => model.trim()).filter(Boolean);
+  return (process.env.GEMINI_MODELS ?? "gemini-2.5-flash-lite,gemini-2.5-flash,gemini-3-flash").split(",").map((model) => model.trim()).filter(Boolean);
 }
 
 async function generate(prompt: string, files: Part[], signal: AbortSignal) {
@@ -254,7 +255,17 @@ export async function POST(request: Request) {
   nodes.push({ id: "rag", label: "Case RAG", status: "done", ms: Date.now() - started, detail: `${ranked.length}/${cases.length}` });
 
   let web = { sources: [] as AgentSource[], images: [] as AgentImage[], context: "" };
-  if (parsed.webSearch) {
+  if (isLegalNewsQuery(parsed.message)) {
+    started = Date.now();
+    try {
+      const news = await getLegalNews(periodFromQuery(parsed.message), 10);
+      const prepared = legalNewsForAgent(news);
+      web = { sources: prepared.sources, images: [], context: `CURATED BAHRAIN LEGAL NEWS FEED:\n${prepared.context}` };
+      nodes.push({ id: "web", label: "Legal News Feed", status: "done", ms: Date.now() - started, detail: String(news.length) });
+    } catch {
+      nodes.push({ id: "web", label: "Legal News Feed", status: "error", ms: Date.now() - started });
+    }
+  } else if (parsed.webSearch) {
     started = Date.now();
     try { web = await tavilySearch(parsed.message, request.signal); nodes.push({ id: "web", label: "Tavily", status: "done", ms: Date.now() - started, detail: String(web.sources.length) }); }
     catch { nodes.push({ id: "web", label: "Tavily", status: "error", ms: Date.now() - started }); }
