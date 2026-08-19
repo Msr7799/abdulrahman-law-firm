@@ -2,10 +2,10 @@
 
 import Image from "next/image";
 import { useMemo, useRef, useState } from "react";
-import { ArrowUpLeft, CheckCircle2, ExternalLink, FileCheck2, Files, Printer, RotateCcw, Search, ShieldCheck } from "lucide-react";
+import { ArrowUpLeft, CheckCircle2, ExternalLink, FileCheck2, Files, PenLine, Printer, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 import type { Locale } from "@/config/site";
-import { judicialServices, ministryFormCategories, ministryForms, type MinistryForm, type MinistryFormCategory } from "@/data/government-forms";
+import { judicialServices, ministryFormCategories, ministryForms, officialFormUrls, type MinistryForm, type MinistryFormCategory } from "@/data/government-forms";
 
 type Field = { id: string; ar: string; en: string; type?: "text" | "date" | "number" | "email" | "tel" | "textarea"; required?: boolean; wide?: boolean };
 
@@ -63,6 +63,28 @@ const categoryFields: Record<MinistryFormCategory, Field[]> = {
     { id: "court", ar: "المحكمة / الدائرة", en: "Court / circuit", required: true },
     { id: "opponent", ar: "الخصم / الطرف الآخر", en: "Opponent / other party", wide: true },
   ],
+  criminal: [
+    { id: "caseNumber", ar: "رقم القضية الجنائية", en: "Criminal case number", required: true },
+    { id: "caseYear", ar: "سنة القضية", en: "Case year", type: "number" },
+    { id: "criminalCourt", ar: "المحكمة / الدائرة الجنائية", en: "Criminal court / circuit", required: true },
+    { id: "concernedParty", ar: "اسم صاحب الشأن", en: "Concerned party", wide: true },
+  ],
+  experts: [
+    { id: "expertName", ar: "اسم الخبير", en: "Expert name", required: true, wide: true },
+    { id: "expertRegistration", ar: "رقم قيد الخبير", en: "Expert registration number" },
+    { id: "assignment", ar: "موضوع مأمورية الخبرة", en: "Expert assignment", wide: true },
+  ],
+  registrar: [
+    { id: "profession", ar: "المهنة / نوع القيد المطلوب", en: "Profession / requested registration", required: true, wide: true },
+    { id: "licenceNumber", ar: "رقم الترخيص الحالي — إن وجد", en: "Current licence number — if any" },
+    { id: "qualification", ar: "المؤهل والخبرة", en: "Qualification and experience", wide: true },
+  ],
+  compliance: [
+    { id: "entityName", ar: "اسم المكتب / المنشأة", en: "Office / entity name", required: true, wide: true },
+    { id: "registrationNumber", ar: "رقم القيد / السجل", en: "Registration / CR number" },
+    { id: "complianceOfficer", ar: "مسؤول الالتزام", en: "Compliance officer" },
+    { id: "reportingPeriod", ar: "الفترة محل التقرير", en: "Reporting period" },
+  ],
 };
 
 const closingFields: Field[] = [
@@ -79,6 +101,7 @@ export function GovernmentForms({ locale }: { locale: Locale }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<MinistryFormCategory | "all">("all");
   const [selected, setSelected] = useState<MinistryForm>(ministryForms[0]);
+  const [previewMode, setPreviewMode] = useState<"official" | "office">("official");
   const [values, setValues] = useState<Record<string, string>>(makeInitialValues);
   const editorRef = useRef<HTMLDivElement>(null);
   const fields = useMemo(() => [...commonFields, ...categoryFields[selected.category], ...closingFields], [selected.category]);
@@ -92,12 +115,14 @@ export function GovernmentForms({ locale }: { locale: Locale }) {
   }, [category, locale, query]);
 
   function selectForm(form: MinistryForm) {
-    setSelected(form); setValues(makeInitialValues());
+    setSelected(form); setValues(makeInitialValues()); setPreviewMode("official");
     window.setTimeout(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   }
 
   const formTitle = ar ? selected.titleAr : selected.titleEn;
   const categoryTitle = ar ? ministryFormCategories[selected.category].ar : ministryFormCategories[selected.category].en;
+  const officialUrl = officialFormUrls[selected.id];
+  const isOfficialPdf = officialUrl.startsWith("https://www.moj.gov.bh/images/pdf/");
   const inputClass = "focus-ring mt-2 min-h-11 w-full border border-[#9b9b9b] bg-white px-3 text-sm text-black placeholder:text-black/35";
 
   return <section className="grid gap-7">
@@ -121,10 +146,23 @@ export function GovernmentForms({ locale }: { locale: Locale }) {
       <label className="relative block w-full lg:max-w-md"><Search className="pointer-events-none absolute start-4 top-1/2 -translate-y-1/2 text-white/35" size={17} /><span className="sr-only">{ar ? "بحث" : "Search"}</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={ar ? "ابحث باسم الاستمارة…" : "Search forms…"} className="focus-ring min-h-12 w-full border border-white/15 bg-black/20 pe-4 ps-11 text-sm text-white placeholder:text-white/35" /></label>
     </div>
       <div className="mt-5 flex gap-2 overflow-x-auto pb-2"><FilterButton active={category === "all"} onClick={() => setCategory("all")}>{ar ? "الكل" : "All"}</FilterButton>{(Object.keys(ministryFormCategories) as MinistryFormCategory[]).map((id) => <FilterButton key={id} active={category === id} onClick={() => setCategory(id)}>{ar ? ministryFormCategories[id].ar : ministryFormCategories[id].en}</FilterButton>)}</div>
-      {filteredForms.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{filteredForms.map((form) => { const active = selected.id === form.id; return <button key={form.id} type="button" onClick={() => selectForm(form)} className={`focus-ring group flex min-h-32 flex-col items-start border p-4 text-start transition ${active ? "border-[#da291c] bg-[#da291c]/10" : "border-white/10 bg-white/[.025] hover:border-white/30"}`}><span className="flex w-full items-center justify-between gap-3 text-[10px] text-white/35"><span>{ar ? ministryFormCategories[form.category].ar : ministryFormCategories[form.category].en}</span><span dir="ltr">{form.size}</span></span><strong className="mt-3 text-sm leading-6 text-white/85">{ar ? form.titleAr : form.titleEn}</strong><span className={`mt-auto flex items-center gap-1 pt-3 text-xs font-bold ${active ? "text-[#ef4b4b]" : "text-[#d1b579]"}`}>{ar ? "عرض وتعبئة" : "Open and complete"}<ArrowUpLeft size={14} /></span></button> })}</div> : <div className="mt-4 border border-dashed border-white/15 p-8 text-center text-sm text-white/45">{ar ? "لا توجد استمارات مطابقة للبحث." : "No forms match your search."}</div>}
+      {filteredForms.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{filteredForms.map((form) => { const active = selected.id === form.id; return <button key={form.id} type="button" onClick={() => selectForm(form)} className={`focus-ring group flex min-h-32 flex-col items-start border p-4 text-start transition ${active ? "border-[#da291c] bg-[#da291c]/10" : "border-white/10 bg-white/[.025] hover:border-white/30"}`}><span className="flex w-full items-center justify-between gap-3 text-[10px] text-white/35"><span>{ar ? ministryFormCategories[form.category].ar : ministryFormCategories[form.category].en}</span><span dir="ltr">{form.size}</span></span><strong className="mt-3 text-sm leading-6 text-white/85">{ar ? form.titleAr : form.titleEn}</strong><span className={`mt-auto flex items-center gap-1 pt-3 text-xs font-bold ${active ? "text-[#ef4b4b]" : "text-[#d1b579]"}`}>{ar ? "عرض الاستمارة الأصلية" : "View original form"}<ArrowUpLeft size={14} /></span></button> })}</div> : <div className="mt-4 border border-dashed border-white/15 p-8 text-center text-sm text-white/45">{ar ? "لا توجد استمارات مطابقة للبحث." : "No forms match your search."}</div>}
     </section>
 
-    <div ref={editorRef} className="scroll-mt-24 grid gap-6 border-t border-white/10 pt-7 xl:grid-cols-[380px_1fr]">
+    <div ref={editorRef} className="scroll-mt-24 border-t border-white/10 pt-7">
+      <div className="no-print mb-4 flex flex-col justify-between gap-4 border border-white/10 bg-[#102a31] p-4 sm:flex-row sm:items-center">
+        <div><p className="text-[10px] font-bold text-[#d1b579]">{categoryTitle}</p><h3 className="mt-1 font-bold leading-6">{formTitle}</h3></div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => setPreviewMode("official")} className={`focus-ring min-h-11 border px-4 text-xs font-bold ${previewMode === "official" ? "border-[#771111] bg-[#771111] text-white" : "border-white/15 text-white/60"}`}>{ar ? "الأصل الحكومي" : "Official original"}</button>
+          <button type="button" onClick={() => setPreviewMode("office")} className={`focus-ring flex min-h-11 items-center gap-2 border px-4 text-xs font-bold ${previewMode === "office" ? "border-[#771111] bg-[#771111] text-white" : "border-white/15 text-white/60"}`}><PenLine size={15} />{ar ? "ورقة جمع البيانات" : "Office data sheet"}</button>
+          <a href={officialUrl} target="_blank" rel="noreferrer" className="focus-ring flex min-h-11 items-center gap-2 border border-[#d1b579]/50 px-4 text-xs font-bold text-[#e8ce96] hover:bg-[#d1b579]/10"><ExternalLink size={15} />{ar ? "فتح الأصل وتعبئته" : "Open original to complete"}</a>
+        </div>
+      </div>
+
+      {previewMode === "official" && isOfficialPdf ? <section className="no-print overflow-hidden border border-white/10 bg-[#202326]">
+        <div className="flex items-center gap-2 border-b border-white/10 bg-black/25 px-4 py-3 text-xs text-white/55"><ShieldCheck size={15} className="text-emerald-300" />{ar ? "ملف PDF الأصلي مسترجع مباشرة من موقع وزارة العدل" : "Original PDF retrieved directly from the Ministry of Justice"}</div>
+        <iframe key={selected.id} title={formTitle} src={`/api/moj-form?id=${encodeURIComponent(selected.id)}#toolbar=1&navpanes=0&view=FitH`} className="h-[72vh] min-h-[640px] w-full bg-[#525659]" />
+      </section> : previewMode === "official" ? <section className="no-print grid min-h-80 place-items-center border border-white/10 bg-white/[.025] p-8 text-center"><div><ExternalLink className="mx-auto text-[#d1b579]" size={34} /><h4 className="mt-4 font-bold">{ar ? "هذا النموذج إلكتروني خارجي" : "This is an external online form"}</h4><p className="mt-2 text-sm text-white/45">{ar ? "يفتح نموذج المتابعة الرسمي في Microsoft Forms ولا يمكن تضمينه كملف PDF." : "The official follow-up form opens in Microsoft Forms and cannot be embedded as a PDF."}</p><a href={officialUrl} target="_blank" rel="noreferrer" className="focus-ring mt-5 inline-flex min-h-11 items-center gap-2 bg-[#771111] px-5 text-sm font-bold text-white">{ar ? "فتح النموذج الرسمي" : "Open official form"}<ExternalLink size={15} /></a></div></section> : <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
       <aside className="no-print h-fit border border-white/10 bg-white/[.025] p-5"><div className="flex items-start gap-3"><Files className="mt-1 shrink-0 text-[#d1b579]" size={20} /><div><h3 className="font-bold leading-6">{formTitle}</h3><p className="mt-1 text-xs text-white/40">{categoryTitle}</p></div></div>
         {selected.kind && selected.kind !== "form" && <div className="mt-4 flex gap-2 border border-sky-300/20 bg-sky-300/5 p-3 text-xs leading-5 text-sky-100/70"><CheckCircle2 className="mt-0.5 shrink-0 text-sky-300" size={16} />{ar ? "هذا المستند دليل أو قائمة تحقق؛ استخدم الخانات لتسجيل بيانات الملف والملاحظات قبل طباعته." : "This is a guide or checklist; use the fields to record file details and notes before printing."}</div>}
         <div className="mt-5 grid gap-4">{fields.map((item) => <EditorField key={item.id} field={item} value={values[item.id] ?? ""} label={ar ? item.ar : item.en} inputClass={inputClass} onChange={(value) => setValues((current) => ({ ...current, [item.id]: value }))} />)}</div>
@@ -132,6 +170,7 @@ export function GovernmentForms({ locale }: { locale: Locale }) {
         <p className="mt-4 text-[10px] leading-5 text-white/35">{ar ? "تبقى البيانات داخل هذه الصفحة ولا تُرسل إلى أي جهة. راجع النموذج الحكومي الأصلي قبل التقديم الرسمي." : "Data remains on this page and is not sent anywhere. Check the original government form before formal submission."}</p>
       </aside>
       <FormPreview ar={ar} form={selected} fields={fields} values={values} />
+      </div>}
     </div>
   </section>
 }
