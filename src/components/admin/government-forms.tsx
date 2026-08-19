@@ -2,8 +2,9 @@
 
 import Image from "next/image";
 import { useMemo, useRef, useState } from "react";
-import { ArrowUpLeft, CheckCircle2, ExternalLink, FileCheck2, Files, PenLine, Printer, RotateCcw, Search, ShieldCheck } from "lucide-react";
+import { ArrowUpLeft, CheckCircle2, ChevronsDownUp, ChevronsUpDown, ExternalLink, FileCheck2, Files, Folder, FolderOpen, PenLine, Printer, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
+import { Accordion, AccordionItem, AccordionPanel, AccordionTrigger } from "@/components/animate-ui/components/base/accordion";
 import type { Locale } from "@/config/site";
 import { judicialServices, ministryFormCategories, ministryForms, officialFormUrls, type MinistryForm, type MinistryFormCategory } from "@/data/government-forms";
 
@@ -99,7 +100,8 @@ function makeInitialValues() { return { requestDate: new Date().toISOString().sl
 export function GovernmentForms({ locale }: { locale: Locale }) {
   const ar = locale === "ar";
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<MinistryFormCategory | "all">("all");
+  const categoryIds = Object.keys(ministryFormCategories) as MinistryFormCategory[];
+  const [openCategories, setOpenCategories] = useState<string[]>([categoryIds[0]]);
   const [selected, setSelected] = useState<MinistryForm>(ministryForms[0]);
   const [previewMode, setPreviewMode] = useState<"official" | "office">("official");
   const [values, setValues] = useState<Record<string, string>>(makeInitialValues);
@@ -108,15 +110,23 @@ export function GovernmentForms({ locale }: { locale: Locale }) {
   const filteredForms = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase(locale);
     return ministryForms.filter((form) => {
-      if (category !== "all" && form.category !== category) return false;
       if (!needle) return true;
       return `${form.titleAr} ${form.titleEn} ${ministryFormCategories[form.category].ar}`.toLocaleLowerCase(locale).includes(needle);
     });
-  }, [category, locale, query]);
+  }, [locale, query]);
+  const groupedForms = useMemo(() => categoryIds.map((id) => ({ id, forms: filteredForms.filter((form) => form.category === id) })).filter((group) => group.forms.length > 0), [categoryIds, filteredForms]);
 
   function selectForm(form: MinistryForm) {
     setSelected(form); setValues(makeInitialValues()); setPreviewMode("official");
     window.setTimeout(() => editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  }
+
+  function searchForms(value: string) {
+    setQuery(value);
+    if (value.trim()) {
+      const needle = value.trim().toLocaleLowerCase(locale);
+      setOpenCategories(categoryIds.filter((id) => ministryForms.some((form) => form.category === id && `${form.titleAr} ${form.titleEn} ${ministryFormCategories[id].ar}`.toLocaleLowerCase(locale).includes(needle))));
+    }
   }
 
   const formTitle = ar ? selected.titleAr : selected.titleEn;
@@ -143,10 +153,17 @@ export function GovernmentForms({ locale }: { locale: Locale }) {
 
     <section className="no-print border-t border-white/10 pt-7"><div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
       <div><p className="text-xs font-bold text-[#d1b579]">{ar ? "مكتبة الوزارة" : "MINISTRY LIBRARY"}</p><h3 className="display mt-1 text-2xl">{ar ? "اختر الاستمارة" : "Choose a form"}</h3><p className="mt-1 text-xs text-white/40">{ar ? `${ministryForms.length} نموذجًا ودليلًا مصنفًا` : `${ministryForms.length} categorised forms and guides`}</p></div>
-      <label className="relative block w-full lg:max-w-md"><Search className="pointer-events-none absolute start-4 top-1/2 -translate-y-1/2 text-white/35" size={17} /><span className="sr-only">{ar ? "بحث" : "Search"}</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={ar ? "ابحث باسم الاستمارة…" : "Search forms…"} className="focus-ring min-h-12 w-full border border-white/15 bg-black/20 pe-4 ps-11 text-sm text-white placeholder:text-white/35" /></label>
+      <label className="relative block w-full lg:max-w-md"><Search className="pointer-events-none absolute start-4 top-1/2 -translate-y-1/2 text-white/35" size={17} /><span className="sr-only">{ar ? "بحث" : "Search"}</span><input value={query} onChange={(event) => searchForms(event.target.value)} placeholder={ar ? "ابحث باسم الاستمارة…" : "Search forms…"} className="focus-ring min-h-12 w-full border border-white/15 bg-black/20 pe-4 ps-11 text-sm text-white placeholder:text-white/35" /></label>
     </div>
-      <div className="mt-5 flex gap-2 overflow-x-auto pb-2"><FilterButton active={category === "all"} onClick={() => setCategory("all")}>{ar ? "الكل" : "All"}</FilterButton>{(Object.keys(ministryFormCategories) as MinistryFormCategory[]).map((id) => <FilterButton key={id} active={category === id} onClick={() => setCategory(id)}>{ar ? ministryFormCategories[id].ar : ministryFormCategories[id].en}</FilterButton>)}</div>
-      {filteredForms.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{filteredForms.map((form) => { const active = selected.id === form.id; return <button key={form.id} type="button" onClick={() => selectForm(form)} className={`focus-ring group flex min-h-32 flex-col items-start border p-4 text-start transition ${active ? "border-[#da291c] bg-[#da291c]/10" : "border-white/10 bg-white/[.025] hover:border-white/30"}`}><span className="flex w-full items-center justify-between gap-3 text-[10px] text-white/35"><span>{ar ? ministryFormCategories[form.category].ar : ministryFormCategories[form.category].en}</span><span dir="ltr">{form.size}</span></span><strong className="mt-3 text-sm leading-6 text-white/85">{ar ? form.titleAr : form.titleEn}</strong><span className={`mt-auto flex items-center gap-1 pt-3 text-xs font-bold ${active ? "text-[#ef4b4b]" : "text-[#d1b579]"}`}>{ar ? "عرض الاستمارة الأصلية" : "View original form"}<ArrowUpLeft size={14} /></span></button> })}</div> : <div className="mt-4 border border-dashed border-white/15 p-8 text-center text-sm text-white/45">{ar ? "لا توجد استمارات مطابقة للبحث." : "No forms match your search."}</div>}
+      <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setOpenCategories(categoryIds)} className="focus-ring flex min-h-10 items-center gap-2 border border-white/10 px-4 text-xs font-bold text-white/55 hover:border-white/25 hover:text-white"><ChevronsDownUp size={15} />{ar ? "فتح كل الأقسام" : "Expand all"}</button><button type="button" onClick={() => setOpenCategories([])} className="focus-ring flex min-h-10 items-center gap-2 border border-white/10 px-4 text-xs font-bold text-white/55 hover:border-white/25 hover:text-white"><ChevronsUpDown size={15} />{ar ? "طي كل الأقسام" : "Collapse all"}</button></div>
+      {groupedForms.length ? <Accordion multiple value={openCategories} onValueChange={(value) => setOpenCategories(value.filter((item): item is string => typeof item === "string"))} className="mt-4 grid gap-3">{groupedForms.map((group) => {
+        const meta = ministryFormCategories[group.id];
+        const open = openCategories.includes(group.id);
+        return <AccordionItem key={group.id} value={group.id} className={`overflow-hidden border ${open ? "border-[#771111]/70 bg-[#771111]/[.045]" : "border-white/10 bg-white/[.025]"}`}>
+          <AccordionTrigger className="focus-ring min-h-18 w-full items-center px-5 py-4 text-start hover:no-underline"><span className="flex min-w-0 items-center gap-3"><span className={`grid size-10 shrink-0 place-items-center ${open ? "bg-[#771111] text-white" : "bg-white/[.05] text-[#d1b579]"}`}>{open ? <FolderOpen size={19} /> : <Folder size={19} />}</span><span className="min-w-0"><strong className="block text-sm text-white/90">{ar ? meta.ar : meta.en}</strong><span className="mt-1 block text-[11px] font-normal text-white/35">{ar ? `${group.forms.length} استمارة داخل القسم` : `${group.forms.length} forms in this section`}</span></span></span></AccordionTrigger>
+          <AccordionPanel className="border-t border-white/10 p-4 sm:p-5"><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{group.forms.map((form) => { const active = selected.id === form.id; return <button key={form.id} type="button" onClick={() => selectForm(form)} className={`focus-ring group flex min-h-32 flex-col items-start border p-4 text-start transition ${active ? "border-[#da291c] bg-[#da291c]/10" : "border-white/10 bg-black/10 hover:border-white/30"}`}><span className="flex w-full items-center justify-between gap-3 text-[10px] text-white/35"><span>{form.kind === "guide" ? ar ? "دليل" : "Guide" : form.kind === "checklist" ? ar ? "قائمة تحقق" : "Checklist" : ar ? "استمارة" : "Form"}</span><span dir="ltr">{form.size}</span></span><strong className="mt-3 text-sm leading-6 text-white/85">{ar ? form.titleAr : form.titleEn}</strong><span className={`mt-auto flex items-center gap-1 pt-3 text-xs font-bold ${active ? "text-[#ef4b4b]" : "text-[#d1b579]"}`}>{ar ? "عرض الاستمارة الأصلية" : "View original form"}<ArrowUpLeft size={14} /></span></button> })}</div></AccordionPanel>
+        </AccordionItem>;
+      })}</Accordion> : <div className="mt-4 border border-dashed border-white/15 p-8 text-center text-sm text-white/45">{ar ? "لا توجد استمارات مطابقة للبحث." : "No forms match your search."}</div>}
     </section>
 
     <div ref={editorRef} className="scroll-mt-24 border-t border-white/10 pt-7">
@@ -174,8 +191,6 @@ export function GovernmentForms({ locale }: { locale: Locale }) {
     </div>
   </section>
 }
-
-function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) { return <button type="button" onClick={onClick} className={`focus-ring min-h-10 shrink-0 border px-4 text-xs font-bold transition ${active ? "border-[#771111] bg-[#771111] text-white" : "border-white/10 text-white/50 hover:border-white/25 hover:text-white"}`}>{children}</button> }
 
 function EditorField({ field, value, label, inputClass, onChange }: { field: Field; value: string; label: string; inputClass: string; onChange: (value: string) => void }) {
   const content = field.type === "textarea" ? <textarea value={value} required={field.required} onChange={(event) => onChange(event.target.value)} className={`${inputClass} min-h-24 py-3`} /> : <input value={value} required={field.required} type={field.type ?? "text"} onChange={(event) => onChange(event.target.value)} className={inputClass} dir={["number", "tel", "email"].includes(field.type ?? "") ? "ltr" : undefined} />;
