@@ -1,6 +1,6 @@
 "use client";
 
-import { type ButtonHTMLAttributes, useEffect, useMemo, useRef, useState } from "react";
+import { type ButtonHTMLAttributes, type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import Image from "next/image";
 import type { User } from "firebase/auth";
@@ -542,7 +542,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     <section
       data-legal-agent-root="true"
       className="legal-agent-frame legal-agent-layout relative grid h-full min-h-0 w-full min-w-0 max-w-full touch-pan-y overflow-hidden overscroll-none bg-[#0c1c21] xl:border xl:border-white/10"
-      style={{ "--legal-agent-sidebar-width": historySidebarCollapsed ? "0px" : "21rem" }}
+      style={{ "--legal-agent-sidebar-width": historySidebarCollapsed ? "0px" : "21rem" } as CSSProperties & Record<"--legal-agent-sidebar-width", string>}
     >
       <div className="legal-agent-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#0c1c21]">
         <header className="legal-agent-topbar flex h-14 shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-[#0c1c21]/95 px-3 backdrop-blur sm:px-5">

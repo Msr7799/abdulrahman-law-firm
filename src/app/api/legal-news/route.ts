@@ -13,8 +13,9 @@ export async function GET(request: Request) {
   const limit = Math.min(24, Math.max(1, Number(url.searchParams.get("limit") ?? 12) || 12));
   const selectedPeriod = period(url.searchParams.get("period"));
   const items = await getLegalNews(selectedPeriod, limit);
+  const sources = Array.from(new Set(items.map((item) => item.sourceName)));
   return NextResponse.json(
-    { ok: true, period: selectedPeriod, generatedAt: new Date().toISOString(), items },
+    { ok: true, period: selectedPeriod, generatedAt: new Date().toISOString(), sourceCount: sources.length, sources, items },
     { headers: { "Cache-Control": "public, s-maxage=900, stale-while-revalidate=1800" } },
   );
 }
