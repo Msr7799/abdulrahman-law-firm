@@ -1,4 +1,5 @@
 import type { LegalNewsItem, LegalNewsLogo } from "@/types/legal-news";
+import { bahrainLogoCatalog } from "@/data/bahrain-logo-catalog";
 
 function uniqueLogos(item: LegalNewsItem) {
   const raw: LegalNewsLogo[] = [];
@@ -14,20 +15,25 @@ function uniqueLogos(item: LegalNewsItem) {
   }).slice(0, 4);
 }
 
+
+const governmentLogo = bahrainLogoCatalog.find((logo) => logo.name === "Government of Bahrain");
+
 export function getLegalNewsLogos(item: LegalNewsItem) {
   return uniqueLogos(item);
 }
 
 export function NewsLogoCluster({ item, mode = "panel" }: { item: LegalNewsItem; mode?: "panel" | "overlay" | "compact" }) {
   const logos = uniqueLogos(item);
-  if (!logos.length) return null;
+  const gov = governmentLogo;
+  const displayLogos = logos.filter((logo) => logo.url !== gov?.url && logo.name !== gov?.name);
 
   if (mode === "overlay") {
+    if (!displayLogos.length) return null;
     return (
-      <div className="absolute start-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] items-center gap-1.5 sm:start-4 sm:top-4">
-        {logos.slice(0, 3).map((logo) => (
-          <div key={logo.url} title={logo.name} className="grid h-12 min-w-14 place-items-center rounded-md border border-white/75 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur sm:h-14 sm:min-w-16">
-            <img src={logo.url} alt={logo.name} className="max-h-8 max-w-16 object-contain sm:max-h-9 sm:max-w-20" />
+      <div className="absolute start-4 top-4 z-20 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2 sm:start-5 sm:top-5 sm:gap-2.5">
+        {displayLogos.slice(0, 3).map((logo) => (
+          <div key={logo.url} title={logo.name} className="grid h-16 min-w-20 place-items-center rounded-md border border-white/80 bg-white/95 px-3 py-2 shadow-xl backdrop-blur sm:h-20 sm:min-w-24">
+            <img src={logo.url} alt={logo.name} className="max-h-11 max-w-24 object-contain sm:max-h-14 sm:max-w-28" />
           </div>
         ))}
       </div>
@@ -36,26 +42,37 @@ export function NewsLogoCluster({ item, mode = "panel" }: { item: LegalNewsItem;
 
   if (mode === "compact") {
     return (
-      <div className="flex h-full w-full items-center justify-center gap-2 bg-[#fffdf8] p-3">
-        {logos.slice(0, 3).map((logo) => (
-          <div key={logo.url} title={logo.name} className="grid h-20 min-w-20 flex-1 place-items-center rounded-md border border-[#ded8cc] bg-white p-2 shadow-sm">
-            <img src={logo.url} alt={logo.name} className="max-h-14 max-w-full object-contain" />
+      <div className="admin-news-logo-fallback relative flex h-full min-h-60 w-full items-center justify-center overflow-hidden bg-[#fffdf8] p-5">
+        {gov && <img src={gov.url} alt="Government of Bahrain" className="max-h-44 max-w-[58%] object-contain opacity-95" />}
+        {!!displayLogos.length && (
+          <div className="absolute end-3 top-3 flex max-w-[58%] flex-wrap justify-end gap-2">
+            {displayLogos.slice(0, 3).map((logo) => (
+              <div key={logo.url} title={logo.name} className="grid h-16 min-w-20 place-items-center rounded-md border border-[#ded8cc] bg-white/95 px-2.5 py-2 shadow-md">
+                <img src={logo.url} alt={logo.name} className="max-h-11 max-w-24 object-contain" />
+              </div>
+            ))}
           </div>
-        ))}
+        )}
       </div>
     );
   }
 
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-[radial-gradient(circle_at_center,#fffdf8_0%,#f4efe5_64%,#e9e0d2_100%)] p-6 sm:p-10">
-      <div className={`grid w-full max-w-3xl gap-3 ${logos.length === 1 ? "grid-cols-1" : logos.length === 2 ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-3"}`}>
-        {logos.slice(0, 3).map((logo, index) => (
-          <div key={logo.url} title={logo.name} className={`flex min-h-32 items-center justify-center rounded-md border border-[#ded8cc] bg-white/95 p-4 shadow-sm sm:min-h-40 ${logos.length === 1 ? "mx-auto w-full max-w-md" : ""}`}>
-            <img src={logo.url} alt={logo.name} className={`${logos.length === 1 ? "max-h-40 max-w-[78%] sm:max-h-52" : "max-h-24 max-w-[90%] sm:max-h-32"} object-contain drop-shadow-sm`} />
-            {index === 0 && logo.role === "source" ? <span className="sr-only">Source</span> : null}
-          </div>
-        ))}
+    <div className="absolute inset-0 overflow-hidden bg-[radial-gradient(circle_at_center,#fffdf8_0%,#f4efe5_64%,#e9e0d2_100%)]">
+      <div className="absolute inset-0 flex items-center justify-center p-8 sm:p-12">
+        {gov ? (
+          <img src={gov.url} alt="Government of Bahrain" className="max-h-[58%] max-w-[70%] object-contain drop-shadow-sm" />
+        ) : null}
       </div>
+      {!!displayLogos.length && (
+        <div className="absolute end-4 top-4 z-10 flex max-w-[70%] flex-wrap justify-end gap-2 sm:end-6 sm:top-6 sm:gap-3">
+          {displayLogos.slice(0, 3).map((logo) => (
+            <div key={logo.url} title={logo.name} className="grid h-20 min-w-24 place-items-center rounded-md border border-[#ded8cc] bg-white/96 px-3 py-2 shadow-lg sm:h-24 sm:min-w-28">
+              <img src={logo.url} alt={logo.name} className="max-h-14 max-w-28 object-contain sm:max-h-16 sm:max-w-32" />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

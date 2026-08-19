@@ -20,6 +20,8 @@ const aliasRules: AliasRule[] = [
   { logo: "University of Bahrain", patterns: [/جامعة\s*البحرين|جامعه\s*البحرين|university of bahrain|uob\.edu\.bh/i], weight: 124 },
   { logo: "Ministry of Education", patterns: [/وزارة\s*(?:التربية\s*والتعليم|التربية|التعليم)|وزاره\s*(?:التربيه\s*والتعليم|التعليم)|ministry of education|moe\.gov\.bh/i], weight: 116 },
   { logo: "Ministry of Interior", patterns: [/وزارة\s*الداخلية|وزاره\s*الداخليه|ministry of interior|interior\.gov\.bh|moi\.gov\.bh/i], weight: 118 },
+  { logo: "General Directorate of Traffic", patterns: [/الإدارة\s*العامة\s*للمرور|الاداره\s*العامه\s*للمرور|المرور|traffic|general directorate of traffic/i], weight: 124 },
+  { logo: "National Cyber Security Center", patterns: [/المركز\s*الوطني\s*للأمن\s*السيبراني|المركز\s*الوطني\s*للامن\s*السيبراني|الأمن\s*السيبراني|الامن\s*السيبراني|cyber\s*security|national cyber security center|ncsc/i], weight: 126 },
   { logo: "Ministry of Justice, Islamic Affairs and Waqf", patterns: [/وزارة\s*العدل|وزاره\s*العدل|ministry of justice|moj\.gov\.bh/i], weight: 118 },
   { logo: "Legislation & Legal Opinion Commission", patterns: [/هيئة\s*التشريع\s*والرأي\s*القانوني|هيئه\s*التشريع\s*والراي\s*القانوني|legislation\s*&?\s*legal opinion|legalaffairs\.gov\.bh/i], weight: 125 },
   { logo: "Ministry of Legal Affairs", patterns: [/وزارة\s*الشؤون\s*القانونية|وزاره\s*الشؤون\s*القانونيه|ministry of legal affairs/i], weight: 118 },

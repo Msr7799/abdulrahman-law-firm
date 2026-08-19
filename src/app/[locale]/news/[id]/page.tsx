@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { isLocale } from "@/config/site";
 import { getLegalNews } from "@/lib/legal-news";
-import { NewsLogoCluster } from "@/components/news/news-logo-cluster";
+import { NewsLogoCluster, getLegalNewsLogos } from "@/components/news/news-logo-cluster";
 
 export default async function LegalNewsDetail({ params }: { params: Promise<{ locale: string; id: string }> }) {
   const { locale, id } = await params;
@@ -12,6 +12,7 @@ export default async function LegalNewsDetail({ params }: { params: Promise<{ lo
   const items = await getLegalNews("month", 24);
   const item = items.find((candidate) => candidate.id === id);
   if (!item) notFound();
+  const itemLogos = getLegalNewsLogos(item);
   const Arrow = ar ? ArrowLeft : ArrowRight;
   const date = new Intl.DateTimeFormat(ar ? "ar-BH" : "en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(item.publishedAt));
 
@@ -20,8 +21,8 @@ export default async function LegalNewsDetail({ params }: { params: Promise<{ lo
       <Link href={`/${locale}`} className="focus-ring inline-flex items-center gap-2 text-xs font-bold text-[#9a783f]"><Arrow size={15} />{ar ? "العودة للرئيسية" : "Back to home"}</Link>
       <div className="mt-6 overflow-hidden border border-[#ded8cc] bg-[#fffdf8] shadow-[0_24px_80px_rgba(16,25,27,.08)]">
         <div className="relative min-h-64 overflow-hidden bg-[#132b32] sm:min-h-80">
-          {item.imageUrl ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(to top,rgba(7,18,22,.82),rgba(7,18,22,.10)),url(${JSON.stringify(item.imageUrl).slice(1,-1)})` }} /> : item.sourceLogoUrl || item.relatedLogos?.length ? <NewsLogoCluster item={item} mode="panel" /> : <div className="absolute inset-0 grid place-items-center"><img src="/assets/logos/bahrain-official-logo-no-text-gold.svg" alt="" className="h-40 opacity-40" /></div>}
-          {item.imageUrl && (item.sourceLogoUrl || item.relatedLogos?.length) && <NewsLogoCluster item={item} mode="overlay" />}
+          {item.imageUrl ? <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(to top,rgba(7,18,22,.82),rgba(7,18,22,.10)),url(${JSON.stringify(item.imageUrl).slice(1,-1)})` }} /> : <NewsLogoCluster item={item} mode="panel" />}
+          {item.imageUrl && itemLogos.length > 0 && <NewsLogoCluster item={item} mode="overlay" />}
           <div className={`absolute inset-x-0 bottom-0 p-6 sm:p-8 ${item.imageUrl ? "text-white" : "text-[#132b32]"}`}><span className={`inline-flex rounded-sm border px-2.5 py-1 text-[10px] font-bold backdrop-blur ${item.imageUrl ? "border-white/20 bg-black/35" : "border-[#132b32]/15 bg-white/80"}`}>{item.sourceName}</span><h1 className="display mt-4 max-w-3xl text-3xl leading-tight sm:text-4xl">{item.title}</h1><p className={`mt-3 text-xs ${item.imageUrl ? "text-white/60" : "text-[#657073]"}`}>{date}</p></div>
         </div>
         <div className="p-6 sm:p-8">

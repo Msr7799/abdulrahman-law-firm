@@ -9,6 +9,8 @@ import { agentSkillsForPrompt } from "@/data/agent-skills";
 import { signedAgentImagePath } from "@/lib/agent-image";
 import { cacheRemoteAgentImage } from "@/lib/agent-image-cache";
 import { getLegalNews, isLegalNewsQuery, legalNewsForAgent, periodFromQuery } from "@/lib/legal-news";
+import { bahrainLogoDirectorySummary, searchBahrainLogoDirectory } from "@/lib/bahrain-logo-directory";
+import type { LegalNewsItem, LegalNewsLogo } from "@/types/legal-news";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -174,6 +176,73 @@ function caseContext(ranked: ReturnType<typeof rankCases>) {
   }).join("\n\n");
 }
 
+function dedupeSources(items: AgentSource[]) {
+  return Array.from(new Map(items.filter((item) => item.url?.startsWith("https://")).map((item) => [item.url, item])).values());
+}
+
+function dedupeImages(items: AgentImage[]) {
+  return Array.from(new Map(items.filter((item) => item.url?.startsWith("https://")).map((item) => [item.url, item])).values());
+}
+
+function todayNewsContext(items: LegalNewsItem[]) {
+  if (!items.length) return "No Bahrain legal/judicial items in the curated site feed are dated today (Bahrain time).";
+  return items.map((item, index) =>
+    `[N${index + 1}] ${item.title}\nSource: ${item.sourceName}\nPublished: ${item.publishedAt}\nURL: ${item.sourceUrl}\nCategory: ${item.category}\nVerification: ${item.verification}\nSummary: ${item.summary}`,
+  ).join("\n\n");
+}
+
+function siteDisplayedNewsContext(items: LegalNewsItem[]) {
+  if (!items.length) return "No items are currently available in the site's Bahrain news carousel.";
+  return items.map((item, index) =>
+    `[S${index + 1}] ${item.title}\nSource: ${item.sourceName}\nPublished: ${item.publishedAt}\nURL: ${item.sourceUrl}\nCategory: ${item.category}\nSummary: ${item.summary}`,
+  ).join("\n\n");
+}
+
+function collectNewsLogos(items: LegalNewsItem[]) {
+  const logos: LegalNewsLogo[] = [];
+  for (const item of items) {
+    if (item.sourceLogo) logos.push(item.sourceLogo);
+    if (item.relatedLogos?.length) logos.push(...item.relatedLogos);
+  }
+  return Array.from(new Map(logos.map((logo) => [logo.url, logo])).values());
+}
+
+async function prepareLogoAccess(query: string, extraText: string, newsItems: LegalNewsItem[]) {
+  const summary = await bahrainLogoDirectorySummary();
+  const logoIntent = /(?:شعار|لوقو|logo|logos)/i.test(query);
+  const newsIntent = isLegalNewsQuery(query) || /(?:خبر|أخبار|اخبار|صحيفة|جريدة|وكالة أنباء|news|press|newspaper)/i.test(query);
+  const queryMatches = await searchBahrainLogoDirectory(`${query}\n${extraText}`, logoIntent ? 16 : 8);
+  const newsLogos = newsIntent ? collectNewsLogos(newsItems).map((logo) => ({ name: logo.name, url: logo.url, category: "مرتبط بأخبار الموقع", score: 210 })) : [];
+  const maxLogos = logoIntent ? 16 : 10;
+  const merged = Array.from(new Map([...queryMatches, ...newsLogos].map((logo) => [logo.url, logo])).values()).slice(0, maxLogos);
+
+  const preparedImages = await Promise.all(merged.map(async (logo) => {
+    try {
+      const prepared = await cacheRemoteAgentImage(logo.url);
+      return {
+        url: logo.url,
+        displayUrl: signedAgentImagePath(logo.url, prepared.id),
+        description: `${logo.name} — ${logo.category}`,
+      };
+    } catch {
+      return null;
+    }
+  }));
+  const images: AgentImage[] = preparedImages.filter(
+    (item): item is NonNullable<(typeof preparedImages)[number]> => item !== null,
+  );
+
+  const renderable = new Set(images.map((image) => image.url));
+  const context = merged.map((logo, index) =>
+    `[L${index + 1}] ${logo.name}\nCategory: ${logo.category}\nIMAGE URL: ${logo.url}\nRenderable in answer: ${renderable.has(logo.url) ? "yes" : "no"}`,
+  ).join("\n\n");
+  const categories = summary.categories.map((item) => `${item.name} (${item.count})`).join("، ");
+  return {
+    images,
+    context: `ROOT LOGO DIRECTORY: bahrain-logos-all-categorized.html\nDirectory entries available: ${summary.total}\nCategories: ${categories}\n\nRELEVANT LOGOS FOR THIS REQUEST/CONTEXT:\n${context || "No strongly matching logo found for this request."}`,
+  };
+}
+
 function systemPrompt() {
   return `You are the private legal-office research assistant for Abdulrahman Almawdah in Bahrain.
 Respond in the user's language using clear Markdown. You assist a qualified lawyer; you do not replace professional judgment.
@@ -199,6 +268,8 @@ Rules:
 19. Use a short blockquote for the key conclusion or an important warning, bullet or numbered lists for steps, **bold** for key labels, and horizontal rules only between major phases. Do not output HTML, inline CSS, or arbitrary color instructions; the interface applies accessible colors consistently.
 20. For an attached CV or visual document, begin with a clear document title and an executive summary, then separate verified personal details, experience, education, skills, visual/layout observations, gaps or uncertainties, and practical recommendations. Explicitly describe any portrait, logo, signature, stamp, chart, or other image you can actually observe. Never infer an identity or visual detail that is not legible.
 21. When AVAILABLE VERIFIED IMAGES are supplied and the user asks for images, place the most relevant ones inside the answer using exact Markdown image syntax ![short Arabic description](exact IMAGE URL), followed by a normal source link when available. Never invent or alter an image URL. The interface will render and proxy these verified images safely.
+22. BAHRAIN LOGO DIRECTORY is a read-only office asset loaded from the project-root bahrain-logos-all-categorized.html file (with a built-in catalog only as a deployment fallback). Use only the exact supplied [L#] logo names and IMAGE URLs. When a logo materially improves the answer, embed only entries marked "Renderable in answer: yes" using exact Markdown image syntax. Never invent a logo URL or claim an organization is involved merely because its logo is available.
+23. SITE NEWS TODAY is the same curated Bahrain legal/judicial news pipeline used by the website and is calculated using Bahrain local day boundaries. SITE HOMEPAGE NEWS is the exact current eight-item news set requested by the homepage carousel. You may use these feeds even when Tavily is off, but cite the original article URL and distinguish press reporting from official material.
 
 CORE LEGAL SKILLS:
 ${agentSkillsForPrompt()}
@@ -254,11 +325,23 @@ export async function POST(request: Request) {
   const ranked = rankCases(cases, parsed.message, 6);
   nodes.push({ id: "rag", label: "Case RAG", status: "done", ms: Date.now() - started, detail: `${ranked.length}/${cases.length}` });
 
+  // Always give the agent the same Bahrain-news knowledge that powers the site.
+  // The first list is strict "today" in Bahrain time; the second mirrors the homepage carousel exactly.
+  started = Date.now();
+  let todayNews: LegalNewsItem[] = [];
+  let homepageNews: LegalNewsItem[] = [];
+  try {
+    [todayNews, homepageNews] = await Promise.all([getLegalNews("today", 30), getLegalNews("week", 8)]);
+    nodes.push({ id: "site-news", label: "Site news · Bahrain today", status: "done", ms: Date.now() - started, detail: `${todayNews.length} today / ${homepageNews.length} homepage` });
+  } catch {
+    nodes.push({ id: "site-news", label: "Site news · Bahrain today", status: "error", ms: Date.now() - started });
+  }
+
   let web = { sources: [] as AgentSource[], images: [] as AgentImage[], context: "" };
   if (isLegalNewsQuery(parsed.message)) {
     started = Date.now();
     try {
-      const news = await getLegalNews(periodFromQuery(parsed.message), 10);
+      const news = await getLegalNews(periodFromQuery(parsed.message), 30);
       const prepared = legalNewsForAgent(news);
       web = { sources: prepared.sources, images: [], context: `CURATED BAHRAIN LEGAL NEWS FEED:\n${prepared.context}` };
       nodes.push({ id: "web", label: "Legal News Feed", status: "done", ms: Date.now() - started, detail: String(news.length) });
@@ -272,6 +355,14 @@ export async function POST(request: Request) {
   } else nodes.push({ id: "web", label: "Tavily", status: "skipped", ms: 0 });
 
   started = Date.now();
+  const caseLogoText = ranked.slice(0, 2).map((item) => {
+    const lawCase = item.lawCase;
+    return `${lawCase.caseNumber}/${lawCase.caseYear} ${lawCase.caseType} ${lawCase.court} ${lawCase.judgment || ""} ${lawCase.notes || ""}`;
+  }).join("\n");
+  const logoAccess = await prepareLogoAccess(parsed.message, caseLogoText, [...todayNews, ...homepageNews]).catch(() => ({ images: [] as AgentImage[], context: "Logo directory could not be loaded for this request." }));
+  nodes.push({ id: "logos", label: "Bahrain logo directory", status: logoAccess.images.length ? "done" : "skipped", ms: Date.now() - started, detail: String(logoAccess.images.length) });
+
+  started = Date.now();
   let preparedFiles: { parts: Part[]; uploadedNames: string[] } = { parts: [], uploadedNames: [] };
   try { preparedFiles = await attachmentParts(parsed.files, request.signal); nodes.push({ id: "files", label: preparedFiles.uploadedNames.length ? "Attachments · Files API" : "Attachments", status: parsed.files.length ? "done" : "skipped", ms: Date.now() - started, detail: String(parsed.files.length) }); }
   catch (error) {
@@ -282,14 +373,15 @@ export async function POST(request: Request) {
 
   const history = parsed.history.map((item) => `${item.role === "user" ? "User" : "Assistant"}: ${item.content}`).join("\n\n");
   const fileList = parsed.files.map((file) => `${file.name} (${file.type || "unknown"}, ${file.size} bytes)`).join("\n");
-  const prompt = `RECENT CONVERSATION:\n${history || "(none)"}\n\nPAST CONVERSATION EVIDENCE:\n${parsed.pastHistory || "(not requested; do not infer or recall older chats)"}\n\nUSER QUESTION:\n${parsed.message}\n\nATTACHMENTS:\n${fileList || "(none)"}\n\nCASE CONTEXT:\n${caseContext(ranked) || "No relevant case found."}\n\nWEB EVIDENCE:\n${web.context || "Web search was not requested or returned no official source."}`;
+  const prompt = `RECENT CONVERSATION:\n${history || "(none)"}\n\nPAST CONVERSATION EVIDENCE:\n${parsed.pastHistory || "(not requested; do not infer or recall older chats)"}\n\nUSER QUESTION:\n${parsed.message}\n\nATTACHMENTS:\n${fileList || "(none)"}\n\nCASE CONTEXT:\n${caseContext(ranked) || "No relevant case found."}\n\nSITE NEWS TODAY (Bahrain local date; complete curated set currently available):\n${todayNewsContext(todayNews)}\n\nSITE HOMEPAGE NEWS (exact current homepage carousel set):\n${siteDisplayedNewsContext(homepageNews)}\n\nBAHRAIN LOGO DIRECTORY:\n${logoAccess.context}\n\nWEB EVIDENCE:\n${web.context || "Web search was not requested or returned no official source."}`;
 
   started = Date.now();
   try {
     const result = await generate(prompt, preparedFiles.parts, request.signal);
     nodes.push({ id: "code", label: "Python sandbox", status: result.executableCode || result.codeExecutionResult ? "done" : "skipped", ms: 0, detail: result.executableCode ? "executed" : undefined });
     nodes.push({ id: "gemini", label: result.model, status: "done", ms: Date.now() - started });
-    return NextResponse.json({ ok: true, answer: result.text, model: result.model, nodes, code: result.executableCode, codeResult: result.codeExecutionResult, sources: web.sources, images: web.images, caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
+    const newsSources = isLegalNewsQuery(parsed.message) ? legalNewsForAgent([...todayNews, ...homepageNews]).sources : [];
+    return NextResponse.json({ ok: true, answer: result.text, model: result.model, nodes, code: result.executableCode, codeResult: result.codeExecutionResult, sources: dedupeSources([...web.sources, ...newsSources]), images: dedupeImages([...web.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
   } catch (error) {
     nodes.push({ id: "gemini", label: "Gemini", status: "error", ms: Date.now() - started });
     const message = error instanceof Error ? error.message : "AI_ERROR";

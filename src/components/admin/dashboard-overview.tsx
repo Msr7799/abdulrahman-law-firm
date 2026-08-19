@@ -38,7 +38,6 @@ export function DashboardOverview({
   return (
     <section className="grid gap-6">
       <div className="relative overflow-hidden border border-white/10 bg-[#102a31] p-6 sm:p-8">
-        <div className="absolute -end-16 -top-16 size-64 rounded-full bg-[#b89555]/10 blur-3xl" />
         <div className="relative flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
           <div>
             <div className="flex items-center gap-2 text-xs font-bold text-[#d0ad69]">

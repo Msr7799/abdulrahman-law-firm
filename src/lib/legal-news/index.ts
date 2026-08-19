@@ -519,9 +519,13 @@ const getCachedLegalNews = unstable_cache(loadLegalNewsUncached, ["bahrain-legal
 
 function fromPeriod(period: LegalNewsPeriod) {
   const now = new Date();
+  if (period === "today") {
+    // Bahrain is UTC+3 year-round. Compute midnight in Bahrain, then convert it back to UTC.
+    const bahrainNow = new Date(now.valueOf() + 3 * 60 * 60 * 1000);
+    return Date.UTC(bahrainNow.getUTCFullYear(), bahrainNow.getUTCMonth(), bahrainNow.getUTCDate()) - 3 * 60 * 60 * 1000;
+  }
   const start = new Date(now);
-  if (period === "today") start.setHours(0, 0, 0, 0);
-  else start.setDate(now.getDate() - (period === "week" ? 7 : 30));
+  start.setUTCDate(now.getUTCDate() - (period === "week" ? 7 : 30));
   return start.valueOf();
 }
 
@@ -529,6 +533,8 @@ export async function getLegalNews(period: LegalNewsPeriod = "week", limit = 12)
   const items = await getCachedLegalNews();
   const threshold = fromPeriod(period);
   const filtered = items.filter((item) => new Date(item.publishedAt).valueOf() >= threshold);
+  // Never label older stories as "today" just because today's feed is empty.
+  if (period === "today") return diversify(filtered, Math.max(1, Math.min(limit, 30)));
   const base = filtered.length ? filtered : items;
   return diversify(base, Math.max(1, Math.min(limit, 30)));
 }
