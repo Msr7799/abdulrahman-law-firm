@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useRef, useState } from "react";
-import { ArrowUpLeft, CheckCircle2, ChevronsDownUp, ChevronsUpDown, ExternalLink, FileCheck2, Files, Folder, FolderOpen, PenLine, Printer, RotateCcw, Search, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUpLeft, CheckCircle2, ChevronsDownUp, ChevronsUpDown, ExternalLink, FileCheck2, Files, Folder, FolderOpen, LoaderCircle, PenLine, Printer, RefreshCw, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { LiquidButton } from "@/components/animate-ui/components/buttons/liquid";
 import { Accordion, AccordionItem, AccordionPanel, AccordionTrigger } from "@/components/animate-ui/components/base/accordion";
 import type { Locale } from "@/config/site";
@@ -178,7 +178,7 @@ export function GovernmentForms({ locale }: { locale: Locale }) {
 
       {previewMode === "official" && isOfficialPdf ? <section className="no-print overflow-hidden border border-white/10 bg-[#202326]">
         <div className="flex items-center gap-2 border-b border-white/10 bg-black/25 px-4 py-3 text-xs text-white/55"><ShieldCheck size={15} className="text-emerald-300" />{ar ? "ملف PDF الأصلي مسترجع مباشرة من موقع وزارة العدل" : "Original PDF retrieved directly from the Ministry of Justice"}</div>
-        <iframe key={selected.id} title={formTitle} src={`/api/moj-form?id=${encodeURIComponent(selected.id)}#toolbar=1&navpanes=0&view=FitH`} className="h-[72vh] min-h-[640px] w-full bg-[#525659]" />
+        <OfficialPdfViewer formId={selected.id} title={formTitle} ar={ar} />
       </section> : previewMode === "official" ? <section className="no-print grid min-h-80 place-items-center border border-white/10 bg-white/[.025] p-8 text-center"><div><ExternalLink className="mx-auto text-[#d1b579]" size={34} /><h4 className="mt-4 font-bold">{ar ? "هذا النموذج إلكتروني خارجي" : "This is an external online form"}</h4><p className="mt-2 text-sm text-white/45">{ar ? "يفتح نموذج المتابعة الرسمي في Microsoft Forms ولا يمكن تضمينه كملف PDF." : "The official follow-up form opens in Microsoft Forms and cannot be embedded as a PDF."}</p><a href={officialUrl} target="_blank" rel="noreferrer" className="focus-ring mt-5 inline-flex min-h-11 items-center gap-2 bg-[#771111] px-5 text-sm font-bold text-white">{ar ? "فتح النموذج الرسمي" : "Open official form"}<ExternalLink size={15} /></a></div></section> : <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
       <aside className="no-print h-fit border border-white/10 bg-white/[.025] p-5"><div className="flex items-start gap-3"><Files className="mt-1 shrink-0 text-[#d1b579]" size={20} /><div><h3 className="font-bold leading-6">{formTitle}</h3><p className="mt-1 text-xs text-white/40">{categoryTitle}</p></div></div>
         {selected.kind && selected.kind !== "form" && <div className="mt-4 flex gap-2 border border-sky-300/20 bg-sky-300/5 p-3 text-xs leading-5 text-sky-100/70"><CheckCircle2 className="mt-0.5 shrink-0 text-sky-300" size={16} />{ar ? "هذا المستند دليل أو قائمة تحقق؛ استخدم الخانات لتسجيل بيانات الملف والملاحظات قبل طباعته." : "This is a guide or checklist; use the fields to record file details and notes before printing."}</div>}
@@ -190,6 +190,58 @@ export function GovernmentForms({ locale }: { locale: Locale }) {
       </div>}
     </div>
   </section>
+}
+
+function OfficialPdfViewer({ formId, title, ar }: { formId: string; title: string; ar: boolean }) {
+  const [reloadKey, setReloadKey] = useState(0);
+  const [pdfUrl, setPdfUrl] = useState("");
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    let objectUrl = "";
+
+    async function loadPdf() {
+      setStatus("loading");
+      setPdfUrl("");
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const response = await fetch(`/api/moj-form?id=${encodeURIComponent(formId)}&request=${reloadKey}-${attempt}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new Error(`PDF request failed: ${response.status}`);
+          const blob = await response.blob();
+          if (!blob.type.includes("application/pdf")) throw new Error("Invalid PDF response");
+          if (!active) return;
+          objectUrl = URL.createObjectURL(blob);
+          setPdfUrl(`${objectUrl}#toolbar=1&navpanes=0&view=FitH`);
+          setStatus("ready");
+          return;
+        } catch {
+          if (controller.signal.aborted) return;
+          if (attempt === 2) {
+            if (active) setStatus("error");
+            return;
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
+        }
+      }
+    }
+
+    void loadPdf();
+    return () => {
+      active = false;
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [formId, reloadKey]);
+
+  if (status === "loading") return <div className="grid h-[72vh] min-h-[640px] place-items-center bg-[#525659] text-white"><div className="text-center"><LoaderCircle className="mx-auto animate-spin text-[#d1b579]" size={36} /><p className="mt-4 text-sm text-white/75">{ar ? "جاري تحميل الاستمارة الأصلية…" : "Loading the original form…"}</p><p className="mt-1 text-xs text-white/40">{ar ? "ستتم إعادة المحاولة تلقائيًا عند تعثر الاتصال." : "Connection failures are retried automatically."}</p></div></div>;
+  if (status === "error") return <div className="grid h-[72vh] min-h-[640px] place-items-center bg-[#525659] p-6 text-white"><div className="max-w-md text-center"><p className="font-bold">{ar ? "تعذر تحميل الملف من خادم الوزارة" : "The Ministry server did not return the file"}</p><p className="mt-2 text-sm text-white/55">{ar ? "جرّب مرة أخرى دون إعادة تحميل الصفحة كاملة." : "Try again without reloading the entire page."}</p><button type="button" onClick={() => setReloadKey((value) => value + 1)} className="focus-ring mx-auto mt-5 flex min-h-11 items-center gap-2 bg-[#771111] px-5 text-sm font-bold text-white"><RefreshCw size={16} />{ar ? "إعادة المحاولة" : "Try again"}</button></div></div>;
+  return <iframe key={pdfUrl} title={title} src={pdfUrl} className="h-[72vh] min-h-[640px] w-full bg-[#525659]" />;
 }
 
 function EditorField({ field, value, label, inputClass, onChange }: { field: Field; value: string; label: string; inputClass: string; onChange: (value: string) => void }) {
