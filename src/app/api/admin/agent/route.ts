@@ -239,7 +239,7 @@ async function preflightResearch(message: string, files: File[], signal: AbortSi
 
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const parts: Part[] = [{ text: `USER QUESTION:\n${message}\n\nReturn JSON only. Read the attachments only to ROUTE legal research, not to answer the case. Extract ONLY official URLs actually visible in the files/question; never invent a URL. Produce a concise exact searchQuery using case numbers, article numbers, court names, legislation names, and distinctive legal phrases. If a Bahrain labour attachment visibly raises a settlement/mukhalasa/waiver/release issue (تسوية، مخالصة، صلح، إبراء، تنازل), preserve that issue in legalTopics/searchQuery and include Article 5 of the Bahrain Labour Law as a verification target; this is only a research-routing target, not a conclusion. JSON shape: {"officialUrls":[],"searchQuery":"","legalTopics":[],"articleNumbers":[],"caseReferences":[],"suggestedSkillIds":[]}. suggestedSkillIds may only use: bahrain-legislation-verification, bahrain-labour-settlement-analysis, case-file-analysis, judicial-egovernment-navigation, legal-document-review, source-and-citation-discipline, constitutional-review-analysis, bahrain-judgment-research.` }];
+    const parts: Part[] = [{ text: `USER QUESTION:\n${message}\n\nReturn JSON only. Read the attachments only to ROUTE legal research, not to answer the case. Extract ONLY official URLs actually visible in the files/question; never invent a URL. Produce a concise exact searchQuery using case numbers, article numbers, court names, legislation names, and distinctive legal phrases. If a Bahrain labour attachment visibly raises a settlement/mukhalasa/waiver/release issue (تسوية، مخالصة، صلح، إبراء، تنازل), preserve that issue in legalTopics/searchQuery and include Article 5 of the Bahrain Labour Law as a verification target; this is only a research-routing target, not a conclusion. If the attachment concerns lawyers + AML/CFT (غسل الأموال/تمويل الإرهاب/المحاماة), preserve the exact ministerial decision number, AML decree-law number, professional-confidentiality/right-of-defence issues, equality, and forced-labour issues in searchQuery/legalTopics, and suggest bahrain-lawyers-aml-analysis. Do not invent constitutional article numbers that are not visible in the attachment. JSON shape: {"officialUrls":[],"searchQuery":"","legalTopics":[],"articleNumbers":[],"caseReferences":[],"suggestedSkillIds":[]}. suggestedSkillIds may only use: bahrain-legislation-verification, bahrain-labour-settlement-analysis, bahrain-lawyers-aml-analysis, case-file-analysis, judicial-egovernment-navigation, legal-document-review, source-and-citation-discipline, constitutional-review-analysis, bahrain-judgment-research.` }];
     for (const file of files) {
       const mimeType = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream");
       if (allowedTextTypes.has(mimeType)) {
@@ -463,6 +463,8 @@ Rules:
 31. In arbitration enforcement, distinguish precisely between an order granting enforcement and a judgment refusing enforcement. If the supplied judgment says the enforcement order is non-grievable and non-appealable, do not invent an ordinary grievance route; state the alternative remedy actually identified by the judgment.
 32. Bahrain labour settlements/releases: when a labour dispute includes a settlement, release, waiver, مخالصة, صلح or إبراء, verify Article 5 of the Labour Law from supplied official evidence when available. If Article 5 is evidenced, state its temporal rule completely (during the employment contract OR within three months after termination) and do not treat signature/absence of coercion alone as enough to extinguish statutory rights. Distinguish rights actually covered by the settlement from rights omitted from it.
 33. When the official judgment itself states the actual monetary/dispositive result, describe it as the result reached by the court, not merely as a "مرجحة" prediction. Reserve probabilistic language for analogous/new cases.
+34. Lawyers + AML/CFT: do not describe lawyer-client confidentiality as "absolute" unless the supplied authority literally supports that. Distinguish litigation/defence work from client transactions that the governing AML instrument actually regulates. Verify ministerial competence, professional-confidentiality limits, equality, and forced-labour arguments from the judgment/statutes supplied. If a historical ministerial decision has later been repealed/replaced, keep the historical holding separate from current-law guidance.
+35. Evidence sufficiency comes before fluency: if the exact judgment URL embedded in an attachment is blocked, do not promote an unrelated Bahrain statute merely because it is official. Prefer an exact canonical-URL/case-number recovery; otherwise state the evidentiary gap rather than manufacturing a fully verified holding.
 
 ACTIVE LEGAL SKILLS:
 ${agentSkillsForPrompt(activeSkillIds)}
@@ -853,7 +855,9 @@ async function handleAgentPost(request: Request, emit?: StreamEmitter) {
   const routedResearchText = `${preflight.plan?.searchQuery || initialResearchSeed} ${preflight.plan?.legalTopics.join(" ") || ""} ${preflight.plan?.articleNumbers.join(" ") || ""} ${preflight.plan?.caseReferences.join(" ") || ""}`.trim();
   const labourSettlementResearch = /(?:عمل|عامل|عمال|labou?r|employment)/i.test(routedResearchText)
     && /(?:تسويه|تسوية|مخالصه|مخالصة|ابراء|إبراء|صلح|تنازل|waiver|release|settlement)/i.test(routedResearchText);
-  const tavilyResearchQuery = `${preflight.plan?.searchQuery || routedResearchText || initialResearchSeed}${labourSettlementResearch ? " المادة 5 قانون العمل الصلح الإبراء المخالصة ثلاثة أشهر من انتهاء عقد العمل" : ""}`.replace(/\s+/g, " ").trim().slice(0, 650);
+  const lawyersAmlResearch = /(?:محام|محاماة|lawyer|legal counsel)/i.test(routedResearchText)
+    && /(?:غسل\s*الأموال|غسل\s*الاموال|تمويل\s*الإرهاب|تمويل\s*الارهاب|AML|CFT)/i.test(routedResearchText);
+  const tavilyResearchQuery = `${preflight.plan?.searchQuery || routedResearchText || initialResearchSeed}${labourSettlementResearch ? " المادة 5 قانون العمل الصلح الإبراء المخالصة ثلاثة أشهر من انتهاء عقد العمل" : ""}${lawyersAmlResearch ? " قانون المحاماة رقم 26 لسنة 1980 سرية المحامي حق الدفاع المساواة العمل القهري" : ""}`.replace(/\s+/g, " ").trim().slice(0, 650);
 
   // Fetch exact Bahrain official sources before RAG/Tavily. The fetched judgment becomes both legal
   // evidence and a high-quality retrieval seed for office cases.
@@ -936,10 +940,10 @@ async function handleAgentPost(request: Request, emit?: StreamEmitter) {
   const shouldTavily = broaderResearchRequested || (!authoritativeOfficialReady && (parsed.webSearch || (legalResearchIntent && officialResult.evidence.length === 0)));
   if (shouldTavily) {
     nodes.push({ id: "web", label: "Tavily · relevance gate", status: "running", ms: 0, detail: "searching" });
-    debugEvents.push({ id: "tavily", kind: "tool", title: "tavily_search", status: "running", ms: 0, summary: "أبحث الآن عن المصدر الرسمي/القضائي الأقرب، ثم سأرفض النتائج العامة التي لا تسند المسألة مباشرة.", input: { query: tavilyResearchQuery, labourSettlementResearch }, output: { stage: "searching" } });
+    debugEvents.push({ id: "tavily", kind: "tool", title: "tavily_search", status: "running", ms: 0, summary: "أبحث الآن عن المصدر الرسمي/القضائي الأقرب، وأعطي تطابق الرابط/رقم القضية أولوية مطلقة ثم أرفض أي تشريع حكومي لا يطابق موضوع النزاع.", input: { query: tavilyResearchQuery, labourSettlementResearch, lawyersAmlResearch, expectedOfficialUrls: directOfficialUrls }, output: { stage: "searching" } });
   }
   const tavilyResult = shouldTavily
-    ? await tavilyLegalSearch({ query: tavilyResearchQuery, contextHint: officialHint || directOfficialUrls.join(" "), signal: request.signal, visual: visualSearch })
+    ? await tavilyLegalSearch({ query: tavilyResearchQuery, contextHint: officialHint, expectedOfficialUrls: directOfficialUrls, signal: request.signal, visual: visualSearch })
     : { evidence: [] as ResearchEvidence[], images: [] as AgentImage[], event: { id: "tavily", kind: "tool", title: "tavily_search", status: "skipped", ms: 0, summary: authoritativeOfficialReady ? "تم تجاوز Tavily لأن الحكم/التشريع الرسمي المباشر الكامل متاح ويغطي المسألة، ولا يوجد طلب صريح لمصادر إضافية." : "تم تجاوز Tavily لأن المصدر الرسمي المباشر متاح والبحث الخارجي غير مطلوب.", input: { webSearch: parsed.webSearch, officialEvidence: officialResult.evidence.length, authoritativeOfficialReady, broaderResearchRequested }, output: { accepted: 0 } } satisfies ResearchDebugEvent };
   debugEvents.push(tavilyResult.event);
   nodes.push({ id: "web", label: "Tavily · relevance gate", status: tavilyResult.event.status, ms: tavilyResult.event.ms ?? 0, detail: `${tavilyResult.evidence.length}` });
@@ -974,7 +978,12 @@ async function handleAgentPost(request: Request, emit?: StreamEmitter) {
   // page even when Vercel receives 403/connection blocking from that site. When the result is a
   // high-confidence non-homepage official legal page, promote it to [O#] instead of wasting a
   // second direct fetch and incorrectly leaving official legislation as secondary [W#] evidence.
-  const promotedOfficialSearch = promoteHighConfidenceOfficialTavilyEvidence(tavilyResult.evidence, officialEvidence);
+  const promotedOfficialSearch = promoteHighConfidenceOfficialTavilyEvidence({
+    items: tavilyResult.evidence,
+    existingOfficial: officialEvidence,
+    researchText: tavilyResearchQuery,
+    expectedOfficialUrls: directOfficialUrls,
+  });
   if (promotedOfficialSearch.length) {
     const merged = Array.from(new Map([...officialEvidence, ...promotedOfficialSearch].map((item) => [canonicalEvidenceUrl(item.url) || item.url, item])).values()).slice(0, 6);
     officialEvidence = merged.map((item, index) => ({ ...item, citationId: `O${index + 1}` }));
@@ -984,7 +993,7 @@ async function handleAgentPost(request: Request, emit?: StreamEmitter) {
       title: "official_evidence_promotion",
       status: "done",
       ms: 0,
-      summary: `تمت ترقية ${promotedOfficialSearch.length} نتيجة من Tavily إلى دليل رسمي [O#] لأن الرابط نفسه حكومي بحريني مباشر والمحتوى القانوني عالي الصلة. لن يُعاد طلب الصفحة المحجوبة من الخادم.`,
+      summary: `تمت ترقية ${promotedOfficialSearch.length} نتيجة إلى [O#] بعد اجتياز بوابة تطابق موضوعي مشددة (رابط متوقع/رقم قضية أو تشريع + كلمات موضوعية مميزة)، وليس لمجرد أن الصفحة حكومية.`,
       input: { candidates: promotedOfficialSearch.map((item) => ({ title: item.title, url: item.url, score: item.score })) },
       output: { recoveredVia: "tavily-official-domain-extraction", officialSources: officialEvidence.map((item) => ({ citationId: item.citationId, title: item.title, url: item.url, chars: (item.content || item.snippet || "").length })) },
     });

@@ -132,6 +132,64 @@ function queryTerms(value: string) {
   return [...new Set([...exactRefs.map(normalizeSearch), ...terms])].slice(0, 18);
 }
 
+function compoundLegalReferences(value: string) {
+  const normalized = normalizeSearch(value);
+  const refs: string[] = [];
+  const patterns = [
+    /(?:الطعن|الدعوى|القضيه|القضية|طلب|احاله|إحالة)\s*(?:رقم)?\s*(\d+)\s*(?:لسنه|لسنة|\/)\s*(\d{4})/g,
+    /(?:قرار|مرسوم(?:\s+بقانون)?|قانون)(?:\s+[أ-يa-z]+){0,5}\s*(?:رقم)?\s*\(?\s*(\d+)\s*\)?\s*(?:لسنه|لسنة)\s*(\d{4})/g,
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(normalized))) refs.push(`${match[1]}:${match[2]}`);
+  }
+  return [...new Set(refs)];
+}
+
+const GENERIC_RESEARCH_TERMS = new Set([
+  "قانون", "مرسوم", "قرار", "ماده", "الماده", "تشريع", "حكم", "محكمه", "التمييز", "الدستوريه", "الدستور",
+  "وزير", "العدل", "لسنه", "رقم", "تنفيذ", "اختصاص", "بشان", "مملكه", "البحرين", "law", "decree", "decision",
+  "court", "judgment", "article", "minister", "justice", "bahrain",
+]);
+
+function distinctiveResearchTerms(value: string) {
+  return queryTerms(value).filter((term) => !GENERIC_RESEARCH_TERMS.has(term) && !/^\d+$/.test(term)).slice(0, 14);
+}
+
+function sourceResearchAlignment(title: string, url: string, body: string, researchText: string, expectedOfficialUrls: string[] = []) {
+  if (expectedOfficialUrls.some((expected) => sameEvidenceUrl(expected, url))) return { exactExpected: true, compoundHits: 99, topicHits: 99, aligned: true };
+  const haystack = normalizeSearch(`${title} ${url} ${body}`);
+  const refs = compoundLegalReferences(researchText);
+  const compoundHits = refs.filter((ref) => {
+    const [number, year] = ref.split(":");
+    return haystack.includes(number) && haystack.includes(year);
+  }).length;
+  const terms = distinctiveResearchTerms(researchText);
+  const topicHits = terms.filter((term) => haystack.includes(term)).length;
+  const normalizedResearch = normalizeSearch(researchText);
+  const amlLawyerQuery = /غسل\s*الاموال|مكافحه\s*غسل|تمويل\s*الارهاب|محاماه|محامين|aml/.test(normalizedResearch);
+  const amlLawyerSource = /غسل\s*الاموال|مكافحه\s*غسل|تمويل\s*الارهاب|محاماه|محامين|aml/.test(haystack);
+  const aligned = compoundHits > 0 || (topicHits >= 3 && (!amlLawyerQuery || amlLawyerSource));
+  return { exactExpected: false, compoundHits, topicHits, aligned };
+}
+
+function expectedJudgmentSearchHint(urls: string[], fallbackQuery: string) {
+  for (const raw of urls) {
+    try {
+      const url = new URL(raw);
+      if (!/ahkam\.sjc\.bh$/i.test(url.hostname)) continue;
+      const key = url.searchParams.get("i") || "";
+      const pieces = key.split(/[+\s]+/).filter(Boolean);
+      const first = pieces.find((part) => /^\d+$/.test(part));
+      const year = pieces.find((part) => /^(?:19|20)\d{2}$/.test(part));
+      if (first && year) return `الطعن ${first} لسنة ${year} محكمة التمييز ${fallbackQuery}`.replace(/\s+/g, " ").trim().slice(0, 420);
+    } catch {
+      // Ignore malformed expected URL.
+    }
+  }
+  return fallbackQuery.slice(0, 420);
+}
+
 function relevantWindows(text: string, terms: string[], maxChars = 22_000) {
   if (text.length <= maxChars) return text;
   const normalized = normalizeSearch(text);
@@ -295,12 +353,13 @@ function cleanSearchTitle(title: string, url: string, snippet: string) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "مصدر قانوني"; }
 }
 
-export async function tavilyLegalSearch(args: { query: string; contextHint?: string; signal: AbortSignal; visual?: boolean }) {
+export async function tavilyLegalSearch(args: { query: string; contextHint?: string; expectedOfficialUrls?: string[]; signal: AbortSignal; visual?: boolean }) {
   const started = Date.now();
   const apiKey = process.env.TAVILY_API_KEY;
   const terms = queryTerms(`${args.query} ${args.contextHint ?? ""}`);
   const domains = topicDomains(`${args.query} ${args.contextHint ?? ""}`);
-  const searchQuery = `${args.contextHint ? `${args.contextHint.slice(0, 260)} ` : ""}${args.query}`.replace(/\s+/g, " ").trim().slice(0, 500);
+  const contextHint = args.contextHint && !/^https?:\/\//i.test(args.contextHint.trim()) ? args.contextHint.slice(0, 260) : "";
+  const searchQuery = `${contextHint ? `${contextHint} ` : ""}${args.query}`.replace(/\s+/g, " ").trim().slice(0, 500);
   const body: Record<string, unknown> = {
     query: searchQuery,
     topic: "general",
@@ -313,32 +372,67 @@ export async function tavilyLegalSearch(args: { query: string; contextHint?: str
     include_domains: domains,
   };
 
-  const input = { ...body, apiKey: apiKey ? "configured" : "missing", relevanceTerms: terms };
+  const input = { ...body, apiKey: apiKey ? "configured" : "missing", relevanceTerms: terms, expectedOfficialUrls: args.expectedOfficialUrls ?? [] };
   if (!apiKey) {
     return { evidence: [] as ResearchEvidence[], images: [] as AgentImage[], event: { id: "tavily", kind: "tool", title: "tavily_search", status: "skipped", ms: 0, summary: "Tavily غير مضبوط على الخادم.", input, output: { accepted: 0 } } satisfies ResearchDebugEvent };
   }
 
   try {
-    const response = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.any([args.signal, AbortSignal.timeout(14_000)]),
-    });
-    if (!response.ok) throw new Error(`Tavily HTTP ${response.status}`);
-    const data = await response.json() as { results?: Array<{ title?: string; url?: string; content?: string }>; images?: Array<string | { url?: string; image_url?: string; description?: string }> };
-    const ranked = (data.results ?? []).filter((item) => item.url?.startsWith("https://")).map((item) => {
-      const snippet = item.content?.slice(0, 2200) ?? "";
+    const runSearch = async (searchBody: Record<string, unknown>, timeoutMs = 14_000) => {
+      const response = await fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify(searchBody),
+        signal: AbortSignal.any([args.signal, AbortSignal.timeout(timeoutMs)]),
+      });
+      if (!response.ok) throw new Error(`Tavily HTTP ${response.status}`);
+      return response.json() as Promise<{ results?: Array<{ title?: string; url?: string; content?: string }>; images?: Array<string | { url?: string; image_url?: string; description?: string }> }>;
+    };
+
+    const primaryData = await runSearch(body);
+    let allResults = [...(primaryData.results ?? [])];
+    let allImages = [...(primaryData.images ?? [])];
+    let targetedRetryQuery = "";
+    const expectedOfficialUrls = args.expectedOfficialUrls ?? [];
+    const primaryHasExpected = allResults.some((item) => item.url && expectedOfficialUrls.some((expected) => sameEvidenceUrl(expected, item.url!)));
+    const expectedSjc = expectedOfficialUrls.some((url) => /ahkam\.sjc\.bh/i.test(url));
+    if (expectedSjc && !primaryHasExpected) {
+      targetedRetryQuery = expectedJudgmentSearchHint(expectedOfficialUrls, args.query);
+      const targetedBody: Record<string, unknown> = {
+        query: targetedRetryQuery,
+        topic: "general",
+        search_depth: "advanced",
+        max_results: 6,
+        include_answer: false,
+        include_images: false,
+        include_image_descriptions: false,
+        include_raw_content: false,
+        include_domains: ["ahkam.sjc.bh"],
+      };
+      try {
+        const targeted = await runSearch(targetedBody, 10_000);
+        allResults = [...allResults, ...(targeted.results ?? [])];
+      } catch {
+        // The targeted retry is opportunistic. Keep the primary Tavily result set if it fails.
+      }
+    }
+
+    const dedupedResults = Array.from(new Map(allResults.filter((item) => item.url?.startsWith("https://")).map((item) => [canonicalEvidenceUrl(item.url!) || item.url!, item])).values());
+    const ranked = dedupedResults.map((item) => {
+      const snippet = item.content?.slice(0, 3200) ?? "";
       const title = cleanSearchTitle(item.title || item.url || "Source", item.url!, snippet);
       const relevance = sourceRelevance(title, item.url!, snippet, terms);
-      return { title, url: item.url!, snippet, ...relevance };
+      const alignment = sourceResearchAlignment(title, item.url!, snippet, args.query, expectedOfficialUrls);
+      const exactBoost = alignment.exactExpected ? 120 : alignment.compoundHits * 18 + Math.min(18, alignment.topicHits * 3);
+      return { title, url: item.url!, snippet, score: relevance.score + exactBoost, hits: relevance.hits, alignment };
     }).sort((a, b) => b.score - a.score);
 
     // Require either multiple semantic hits or a strong official-domain score. If an exact
     // high-signal judgment page is present, keep the evidence set tight instead of adding generic
     // court homepages that do not materially support the answer.
-    const eligible = ranked.filter((item) => item.score >= 16 && (item.hits >= 1 || item.score >= 22));
-    const exactOfficial = eligible.find((item) => isOfficialBahrainUrl(item.url) && item.score >= 42 && item.hits >= 3 && /(?:File\.aspx|Legislation\/HTM|\bCC\d+)/i.test(item.url));
+    const eligible = ranked.filter((item) => item.alignment.exactExpected || (item.alignment.aligned && item.score >= 24 && (item.hits >= 1 || item.score >= 35)));
+    const exactOfficial = eligible.find((item) => isOfficialBahrainUrl(item.url) && item.alignment.exactExpected)
+      || eligible.find((item) => isOfficialBahrainUrl(item.url) && item.score >= 55 && item.alignment.compoundHits > 0 && /(?:File\.aspx|Legislation\/HTM|\bCC\d+)/i.test(item.url));
     const accepted = exactOfficial
       ? [
           exactOfficial,
@@ -356,7 +450,7 @@ export async function tavilyLegalSearch(args: { query: string; contextHint?: str
       : eligible.slice(0, 5);
     const evidence: ResearchEvidence[] = accepted.map((item, index) => ({ citationId: `W${index + 1}`, sourceType: "tavily", title: item.title, url: canonicalEvidenceUrl(item.url) || item.url, snippet: item.snippet, content: item.snippet, score: item.score }));
 
-    const imageCandidates = Array.from(new Map((data.images ?? [])
+    const imageCandidates = Array.from(new Map(allImages
       .map((item) => typeof item === "string" ? { url: item } : { url: item.url ?? item.image_url ?? "", description: item.description })
       .filter((item) => item.url.startsWith("https://"))
       .map((item) => [item.url, item])).values()).slice(0, 8);
@@ -377,8 +471,9 @@ export async function tavilyLegalSearch(args: { query: string; contextHint?: str
         summary: evidence.length ? `قُبل ${evidence.length} مصدر بعد إعادة الترتيب، ورُفضت النتائج غير المرتبطة.` : "لم تتجاوز أي نتيجة بوابة الصلة القانونية.",
         input,
         output: {
-          accepted: evidence.map((item) => ({ citationId: item.citationId, title: item.title, url: item.url, score: item.score })),
-          rejected: ranked.filter((item) => !accepted.includes(item)).slice(0, 6).map((item) => ({ title: item.title, url: item.url, score: item.score, hits: item.hits })),
+          targetedRetryQuery: targetedRetryQuery || undefined,
+          accepted: accepted.map((item, index) => ({ citationId: `W${index + 1}`, title: item.title, url: canonicalEvidenceUrl(item.url) || item.url, score: item.score, exactExpected: item.alignment.exactExpected, compoundHits: item.alignment.compoundHits, topicHits: item.alignment.topicHits })),
+          rejected: ranked.filter((item) => !accepted.includes(item)).slice(0, 6).map((item) => ({ title: item.title, url: item.url, score: item.score, hits: item.hits, compoundHits: item.alignment.compoundHits, topicHits: item.alignment.topicHits, aligned: item.alignment.aligned })),
         },
       } satisfies ResearchDebugEvent,
     };
@@ -392,12 +487,17 @@ export async function tavilyLegalSearch(args: { query: string; contextHint?: str
 }
 
 
-export function promoteHighConfidenceOfficialTavilyEvidence(items: ResearchEvidence[], existingOfficial: ResearchEvidence[] = []) {
+export function promoteHighConfidenceOfficialTavilyEvidence(args: {
+  items: ResearchEvidence[];
+  existingOfficial?: ResearchEvidence[];
+  researchText: string;
+  expectedOfficialUrls?: string[];
+}) {
   const promoted: ResearchEvidence[] = [];
-  for (const item of items) {
+  const existingOfficial = args.existingOfficial ?? [];
+  for (const item of args.items) {
     if (!isOfficialBahrainUrl(item.url)) continue;
     if (existingOfficial.some((official) => sameEvidenceUrl(official.url, item.url))) continue;
-    const text = `${item.title} ${item.content || item.snippet || ""}`;
     const body = item.content || item.snippet || "";
     const score = item.score ?? 0;
     try {
@@ -406,9 +506,14 @@ export function promoteHighConfidenceOfficialTavilyEvidence(items: ResearchEvide
     } catch {
       continue;
     }
-    const legalPage = /(?:المادة|قانون|مرسوم|تشريع|حكم|الطعن|الدعوى|القضية|محكمة|article|law|legislation|judgment|appeal|cassation)/i.test(text)
+    const alignment = sourceResearchAlignment(item.title, item.url, body, args.researchText, args.expectedOfficialUrls ?? []);
+    const legalPage = /(?:المادة|قانون|مرسوم|تشريع|حكم|الطعن|الدعوى|القضية|محكمة|article|law|legislation|judgment|appeal|cassation)/i.test(`${item.title} ${body}`)
       || /(?:File\.aspx|Legislation\/HTM|\bCC\d+)/i.test(item.url);
-    if (!legalPage || score < 42 || body.trim().length < 300) continue;
+    // A government page is not automatically relevant legal evidence. It must either be the exact
+    // expected source, contain an exact compound legal reference (case/law + year), or strongly
+    // match several distinctive issue terms. This prevents unrelated statutes from becoming [O#].
+    if (!legalPage || !alignment.aligned || body.trim().length < 300) continue;
+    if (!alignment.exactExpected && alignment.compoundHits === 0 && (score < 50 || alignment.topicHits < 3)) continue;
     promoted.push({
       ...item,
       citationId: "",
@@ -446,6 +551,7 @@ export function selectLegalSkillIds(text: string, hasAttachments: boolean) {
   if (/حكم|احكام|أحكام|سابقة|تمييز|استئناف|محكمه|محكمة|قضيه|قضية|judgment|judgement|precedent|appeal|cassation/.test(normalized)) ids.add("bahrain-judgment-research");
   if (/قانون|مرسوم|قرار|لائحه|لائحة|ماده|مادة|تشريع|نفاذ|تعديل|تحكيم|تنفيذ|law|decree|article|legislation|regulation|arbitration|enforcement/.test(normalized)) ids.add("bahrain-legislation-verification");
   if (/(?:عمل|عامل|عمال|عقد العمل|انهاء عقد|إنهاء عقد|labou?r|employment)/.test(normalized) && /(?:تسويه|تسوية|مخالصه|مخالصة|ابراء|إبراء|صلح|تنازل|waiver|release|settlement)/.test(normalized)) ids.add("bahrain-labour-settlement-analysis");
+  if (/(?:محام|محاماه|محاماة|lawyer|legal counsel)/.test(normalized) && /(?:غسل الاموال|غسل الأموال|مكافحه غسل|مكافحة غسل|تمويل الارهاب|تمويل الإرهاب|aml|cft)/.test(normalized)) ids.add("bahrain-lawyers-aml-analysis");
   if (/خدمه|خدمة|معامله|معاملة|الكتروني|إلكتروني|service|egovernment/.test(normalized)) ids.add("judicial-egovernment-navigation");
   if (hasAttachments) ids.add("legal-document-review");
   return [...ids];

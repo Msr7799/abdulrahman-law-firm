@@ -73,3 +73,13 @@
 - Added `bahrain-labour-settlement-analysis`: labour settlements/releases must verify Article 5 when relevant and evidence is available, including the full temporal rule (during the contract or within three months after termination) and the distinction between rights actually covered and rights omitted by the release.
 - For vague attachment commands such as `جاوب`, the Lite router is kept even when a direct official URL is visible, because a primary judgment URL does not identify every secondary statutory issue needed for research.
 - Labour settlement routing enriches the single Tavily query with Article 5 / settlement / release terminology so the official Labour Law result can provide both the termination rule and the settlement rule without a separate Gemini call.
+
+## v20 — Exact-case recovery + AML/lawyers evidence hardening
+
+- When an attachment embeds an exact `ahkam.sjc.bh` judgment URL and direct Vercel fetch is blocked, Tavily now receives that URL as an **expected official source**, not as noisy query text. Exact canonical URL matches receive absolute priority.
+- If the first Tavily search misses an expected SJC judgment, the same tool performs one targeted SJC-only retry using the appeal number/year parsed from the official URL. This does not consume a Gemini request.
+- Official-source promotion now requires **source-topic alignment**, not merely a Bahrain government domain. Promotion requires the exact expected URL, a matching compound legal reference (case/law/decision number + year), or multiple distinctive topic terms. This prevents unrelated statutes such as the Court of Cassation establishment law from becoming `[O#]` in an AML/lawyers case.
+- Added `bahrain-lawyers-aml-analysis`: verify ministerial competence, AML enabling legislation, Lawyers Law confidentiality, defence representation, equality, forced-labour arguments, and historical-vs-current regulation from supplied official evidence.
+- The final legal prompt prohibits describing lawyer-client confidentiality as “absolute” unless the evidence literally supports it, and requires distinguishing defence/representation from regulated client transactions according to the governing source.
+- Deep constitutional/administrative requests always receive one Flash-Lite claim-to-evidence verification pass. This catches cases where every sentence has a syntactically valid `[O#]` but the source is substantively about the wrong law/topic.
+- AML quality verification explicitly checks Decision 64/2017, Decree-Law 4/2001, constitutional/professional-confidentiality holdings, equality and forced-labour reasoning, and flags historical regulations presented as current law.
