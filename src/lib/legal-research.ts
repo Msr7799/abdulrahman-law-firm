@@ -391,6 +391,49 @@ export async function tavilyLegalSearch(args: { query: string; contextHint?: str
   }
 }
 
+
+export function promoteHighConfidenceOfficialTavilyEvidence(items: ResearchEvidence[], existingOfficial: ResearchEvidence[] = []) {
+  const promoted: ResearchEvidence[] = [];
+  for (const item of items) {
+    if (!isOfficialBahrainUrl(item.url)) continue;
+    if (existingOfficial.some((official) => sameEvidenceUrl(official.url, item.url))) continue;
+    const text = `${item.title} ${item.content || item.snippet || ""}`;
+    const body = item.content || item.snippet || "";
+    const score = item.score ?? 0;
+    try {
+      const url = new URL(item.url);
+      if (url.pathname === "/" || /\/(?:search|home|contact|privacy|login)\/?$/i.test(url.pathname)) continue;
+    } catch {
+      continue;
+    }
+    const legalPage = /(?:المادة|قانون|مرسوم|تشريع|حكم|الطعن|الدعوى|القضية|محكمة|article|law|legislation|judgment|appeal|cassation)/i.test(text)
+      || /(?:File\.aspx|Legislation\/HTM|\bCC\d+)/i.test(item.url);
+    if (!legalPage || score < 42 || body.trim().length < 300) continue;
+    promoted.push({
+      ...item,
+      citationId: "",
+      sourceType: "official",
+      url: canonicalEvidenceUrl(item.url) || item.url,
+      score: Math.max(90, score),
+      content: body,
+      snippet: item.snippet || body.slice(0, 1200),
+    });
+  }
+  return promoted;
+}
+
+export function extractEvidenceCitationIds(text: string) {
+  const ids: string[] = [];
+  for (const bracket of text.matchAll(/\[([^\]\n]{1,160})\]/g)) {
+    for (const match of bracket[1].matchAll(/\b([OWC]\d+)\b/gi)) ids.push(match[1].toUpperCase());
+  }
+  return [...new Set(ids)];
+}
+
+export function hasInlineEvidenceCitation(text: string) {
+  return extractEvidenceCitationIds(text).length > 0;
+}
+
 export function evidenceContext(items: ResearchEvidence[]) {
   return items.map((item) => `[${item.citationId}] ${item.title}\nURL: ${item.url}\nSource type: ${item.sourceType}\nRelevance score: ${item.score ?? "n/a"}\n${item.content || item.snippet || ""}`).join("\n\n");
 }
@@ -402,6 +445,7 @@ export function selectLegalSkillIds(text: string, hasAttachments: boolean) {
   if (/دستور|دستوري|المحكمه الدستوريه|المحكمة الدستورية|constitutional|constitution|سمو الدستور|فصل السلطات/.test(normalized)) ids.add("constitutional-review-analysis");
   if (/حكم|احكام|أحكام|سابقة|تمييز|استئناف|محكمه|محكمة|قضيه|قضية|judgment|judgement|precedent|appeal|cassation/.test(normalized)) ids.add("bahrain-judgment-research");
   if (/قانون|مرسوم|قرار|لائحه|لائحة|ماده|مادة|تشريع|نفاذ|تعديل|تحكيم|تنفيذ|law|decree|article|legislation|regulation|arbitration|enforcement/.test(normalized)) ids.add("bahrain-legislation-verification");
+  if (/(?:عمل|عامل|عمال|عقد العمل|انهاء عقد|إنهاء عقد|labou?r|employment)/.test(normalized) && /(?:تسويه|تسوية|مخالصه|مخالصة|ابراء|إبراء|صلح|تنازل|waiver|release|settlement)/.test(normalized)) ids.add("bahrain-labour-settlement-analysis");
   if (/خدمه|خدمة|معامله|معاملة|الكتروني|إلكتروني|service|egovernment/.test(normalized)) ids.add("judicial-egovernment-navigation");
   if (hasAttachments) ids.add("legal-document-review");
   return [...ids];
@@ -419,8 +463,9 @@ export function researchPlanSummary(args: { directUrls: string[]; officialCount:
 
 export function validateEvidenceCitations(answer: string, evidence: ResearchEvidence[]) {
   const valid = new Set(evidence.map((item) => item.citationId));
-  const found = [...answer.matchAll(/\[(O\d+|W\d+)\]/g)].map((match) => match[1]);
-  const uniqueFound = [...new Set(found)];
+  // Accept grouped citations regardless of Arabic/English separators, e.g.
+  // [O1، O2], [O1, W1], [O1/W1] or separate [O1] [W1].
+  const uniqueFound = extractEvidenceCitationIds(answer).filter((id) => /^O\d+$|^W\d+$/.test(id));
   const invalid = uniqueFound.filter((id) => !valid.has(id));
   const validFound = uniqueFound.filter((id) => valid.has(id));
   const rawUrls = [...answer.matchAll(/https?:\/\/[^\s<>"'`{}\[\]]+/g)]

@@ -11,7 +11,7 @@ import { getLegalNews, isLegalNewsQuery, legalNewsForAgent, periodFromQuery } fr
 import { bahrainLogoDirectorySummary, searchBahrainLogoDirectory } from "@/lib/bahrain-logo-directory";
 import type { LegalNewsItem, LegalNewsLogo } from "@/types/legal-news";
 import { compressPdfForAi, type PdfCompressionReport } from "@/lib/pdf-compressor";
-import { canonicalEvidenceUrl, evidenceContext, extractOfficialUrls, fetchOfficialEvidence, isOfficialBahrainUrl, researchPlanSummary, sameEvidenceUrl, selectLegalSkillIds, tavilyLegalSearch, validateEvidenceCitations, type ResearchDebugEvent, type ResearchEvidence } from "@/lib/legal-research";
+import { canonicalEvidenceUrl, evidenceContext, extractOfficialUrls, fetchOfficialEvidence, isOfficialBahrainUrl, promoteHighConfidenceOfficialTavilyEvidence, researchPlanSummary, sameEvidenceUrl, selectLegalSkillIds, tavilyLegalSearch, validateEvidenceCitations, type ResearchDebugEvent, type ResearchEvidence } from "@/lib/legal-research";
 import { diagnoseGeminiError, GeminiRequestError, runGeminiRequest, type GeminiAttemptTrace } from "@/lib/gemini-request-manager";
 import { selectGeminiModelPolicy, type GeminiModelPolicy } from "@/lib/gemini-model-policy";
 import { rankCasesHybrid, type HybridCaseMatch } from "@/lib/case-embedding-rag";
@@ -239,7 +239,7 @@ async function preflightResearch(message: string, files: File[], signal: AbortSi
 
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const parts: Part[] = [{ text: `USER QUESTION:\n${message}\n\nReturn JSON only. Read the attachments only to ROUTE legal research, not to answer the case. Extract ONLY official URLs actually visible in the files/question; never invent a URL. Produce a concise exact searchQuery using case numbers, article numbers, court names, legislation names, and distinctive legal phrases. JSON shape: {"officialUrls":[],"searchQuery":"","legalTopics":[],"articleNumbers":[],"caseReferences":[],"suggestedSkillIds":[]}. suggestedSkillIds may only use: bahrain-legislation-verification, case-file-analysis, judicial-egovernment-navigation, legal-document-review, source-and-citation-discipline, constitutional-review-analysis, bahrain-judgment-research.` }];
+    const parts: Part[] = [{ text: `USER QUESTION:\n${message}\n\nReturn JSON only. Read the attachments only to ROUTE legal research, not to answer the case. Extract ONLY official URLs actually visible in the files/question; never invent a URL. Produce a concise exact searchQuery using case numbers, article numbers, court names, legislation names, and distinctive legal phrases. If a Bahrain labour attachment visibly raises a settlement/mukhalasa/waiver/release issue (تسوية، مخالصة، صلح، إبراء، تنازل), preserve that issue in legalTopics/searchQuery and include Article 5 of the Bahrain Labour Law as a verification target; this is only a research-routing target, not a conclusion. JSON shape: {"officialUrls":[],"searchQuery":"","legalTopics":[],"articleNumbers":[],"caseReferences":[],"suggestedSkillIds":[]}. suggestedSkillIds may only use: bahrain-legislation-verification, bahrain-labour-settlement-analysis, case-file-analysis, judicial-egovernment-navigation, legal-document-review, source-and-citation-discipline, constitutional-review-analysis, bahrain-judgment-research.` }];
     for (const file of files) {
       const mimeType = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream");
       if (allowedTextTypes.has(mimeType)) {
@@ -461,6 +461,8 @@ Rules:
 29. Do not expose an office case [C#] merely because vector similarity is moderate. Use case context only when it is materially related to the legal issue; unrelated client/demo data must remain out of the answer.
 30. Temporal-law rule: when the analysis asks for the law in force at a historical date, distinguish the provision actually in force then from a later statute that a judgment merely describes as the corresponding/replacement rule. Never label a later statute as applicable at the earlier date unless the supplied evidence establishes its commencement.
 31. In arbitration enforcement, distinguish precisely between an order granting enforcement and a judgment refusing enforcement. If the supplied judgment says the enforcement order is non-grievable and non-appealable, do not invent an ordinary grievance route; state the alternative remedy actually identified by the judgment.
+32. Bahrain labour settlements/releases: when a labour dispute includes a settlement, release, waiver, مخالصة, صلح or إبراء, verify Article 5 of the Labour Law from supplied official evidence when available. If Article 5 is evidenced, state its temporal rule completely (during the employment contract OR within three months after termination) and do not treat signature/absence of coercion alone as enough to extinguish statutory rights. Distinguish rights actually covered by the settlement from rights omitted from it.
+33. When the official judgment itself states the actual monetary/dispositive result, describe it as the result reached by the court, not merely as a "مرجحة" prediction. Reserve probabilistic language for analogous/new cases.
 
 ACTIVE LEGAL SKILLS:
 ${agentSkillsForPrompt(activeSkillIds)}
@@ -828,15 +830,19 @@ async function handleAgentPost(request: Request, emit?: StreamEmitter) {
   });
 
   const forceAttachmentPreflight = parsed.files.length > 0 && isGenericAttachmentCommand(parsed.message);
-  if (!rawOfficialUrls.length && (initialModelPolicy.allowPreflight || forceAttachmentPreflight)) {
+  // Generic commands such as "جاوب" still need one cheap Lite routing pass even when a PDF exposes
+  // a direct official URL: the URL identifies the primary judgment, but not secondary issues such as
+  // a labour settlement/Article 5 question that should shape legislation retrieval.
+  const shouldRunPreflight = forceAttachmentPreflight || (!rawOfficialUrls.length && initialModelPolicy.allowPreflight);
+  if (shouldRunPreflight) {
     debugEvents.push({ id: "research-router", kind: "tool", title: "legal_research_router", status: "running", ms: 0, summary: "أقرأ المرفق الآن لاستخراج رقم القضية والمواد ومفاتيح البحث فقط، بدون حل القضية في هذه العقدة.", input: { files: parsed.files.map((file) => ({ name: file.name, type: file.type, bytes: file.size })) }, output: { stage: "calling" } });
     nodes.push({ id: "research-router", label: "Legal research router", status: "running", ms: 0, detail: "reading attachment" });
   }
-  const preflight = rawOfficialUrls.length
-    ? { plan: null, event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "skipped", ms: 0, summary: "تم العثور على رابط رسمي مباشر داخل المرفق؛ سيُقرأ المصدر الرسمي أولاً ويُستخدم هو نفسه لإثراء RAG، لذلك لا حاجة لطلب Flash-Lite إضافي.", input: { rawOfficialUrls }, output: { skipped: true, reason: "direct official source available" } } satisfies ResearchDebugEvent }
-    : !initialModelPolicy.allowPreflight && !forceAttachmentPreflight
-      ? { plan: null, event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "skipped", ms: 0, summary: "سياسة النماذج صنفت الطلب كمهمة لا تحتاج Subagent تمهيدي، فتم توفير طلب Gemini من الحصة المجانية.", input: { workload: initialModelPolicy.workload }, output: { skipped: true } } satisfies ResearchDebugEvent }
-      : await preflightResearch(parsed.message, parsed.files, request.signal, initialModelPolicy.preflightModels);
+  const preflight = shouldRunPreflight
+    ? await preflightResearch(parsed.message, parsed.files, request.signal, initialModelPolicy.preflightModels)
+    : rawOfficialUrls.length
+      ? { plan: null, event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "skipped", ms: 0, summary: "تم العثور على رابط رسمي مباشر والسؤال نفسه وصفي بما يكفي؛ تم توفير طلب Flash-Lite إضافي.", input: { rawOfficialUrls }, output: { skipped: true, reason: "direct official source + descriptive request" } } satisfies ResearchDebugEvent }
+      : { plan: null, event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "skipped", ms: 0, summary: "سياسة النماذج صنفت الطلب كمهمة لا تحتاج Subagent تمهيدي، فتم توفير طلب Gemini من الحصة المجانية.", input: { workload: initialModelPolicy.workload }, output: { skipped: true } } satisfies ResearchDebugEvent };
   if (forceAttachmentPreflight && preflight.event.status !== "skipped") {
     preflight.event.summary = `الأمر مختصر ويعتمد على مرفق؛ تم تشغيل Flash-Lite مرة واحدة لاستخراج موضوع المستند ورقم القضية/المواد وبناء استعلام بحث دقيق. ${preflight.event.summary}`;
   }
@@ -845,6 +851,9 @@ async function handleAgentPost(request: Request, emit?: StreamEmitter) {
 
   const directOfficialUrls = [...new Set([...rawOfficialUrls, ...(preflight.plan?.officialUrls ?? [])])].slice(0, 6);
   const routedResearchText = `${preflight.plan?.searchQuery || initialResearchSeed} ${preflight.plan?.legalTopics.join(" ") || ""} ${preflight.plan?.articleNumbers.join(" ") || ""} ${preflight.plan?.caseReferences.join(" ") || ""}`.trim();
+  const labourSettlementResearch = /(?:عمل|عامل|عمال|labou?r|employment)/i.test(routedResearchText)
+    && /(?:تسويه|تسوية|مخالصه|مخالصة|ابراء|إبراء|صلح|تنازل|waiver|release|settlement)/i.test(routedResearchText);
+  const tavilyResearchQuery = `${preflight.plan?.searchQuery || routedResearchText || initialResearchSeed}${labourSettlementResearch ? " المادة 5 قانون العمل الصلح الإبراء المخالصة ثلاثة أشهر من انتهاء عقد العمل" : ""}`.replace(/\s+/g, " ").trim().slice(0, 650);
 
   // Fetch exact Bahrain official sources before RAG/Tavily. The fetched judgment becomes both legal
   // evidence and a high-quality retrieval seed for office cases.
@@ -927,10 +936,10 @@ async function handleAgentPost(request: Request, emit?: StreamEmitter) {
   const shouldTavily = broaderResearchRequested || (!authoritativeOfficialReady && (parsed.webSearch || (legalResearchIntent && officialResult.evidence.length === 0)));
   if (shouldTavily) {
     nodes.push({ id: "web", label: "Tavily · relevance gate", status: "running", ms: 0, detail: "searching" });
-    debugEvents.push({ id: "tavily", kind: "tool", title: "tavily_search", status: "running", ms: 0, summary: "أبحث الآن عن المصدر الرسمي/القضائي الأقرب، ثم سأرفض النتائج العامة التي لا تسند المسألة مباشرة.", input: { query: preflight.plan?.searchQuery || routedResearchText || initialResearchSeed }, output: { stage: "searching" } });
+    debugEvents.push({ id: "tavily", kind: "tool", title: "tavily_search", status: "running", ms: 0, summary: "أبحث الآن عن المصدر الرسمي/القضائي الأقرب، ثم سأرفض النتائج العامة التي لا تسند المسألة مباشرة.", input: { query: tavilyResearchQuery, labourSettlementResearch }, output: { stage: "searching" } });
   }
   const tavilyResult = shouldTavily
-    ? await tavilyLegalSearch({ query: preflight.plan?.searchQuery || routedResearchText || initialResearchSeed, contextHint: officialHint || directOfficialUrls.join(" "), signal: request.signal, visual: visualSearch })
+    ? await tavilyLegalSearch({ query: tavilyResearchQuery, contextHint: officialHint || directOfficialUrls.join(" "), signal: request.signal, visual: visualSearch })
     : { evidence: [] as ResearchEvidence[], images: [] as AgentImage[], event: { id: "tavily", kind: "tool", title: "tavily_search", status: "skipped", ms: 0, summary: authoritativeOfficialReady ? "تم تجاوز Tavily لأن الحكم/التشريع الرسمي المباشر الكامل متاح ويغطي المسألة، ولا يوجد طلب صريح لمصادر إضافية." : "تم تجاوز Tavily لأن المصدر الرسمي المباشر متاح والبحث الخارجي غير مطلوب.", input: { webSearch: parsed.webSearch, officialEvidence: officialResult.evidence.length, authoritativeOfficialReady, broaderResearchRequested }, output: { accepted: 0 } } satisfies ResearchDebugEvent };
   debugEvents.push(tavilyResult.event);
   nodes.push({ id: "web", label: "Tavily · relevance gate", status: tavilyResult.event.status, ms: tavilyResult.event.ms ?? 0, detail: `${tavilyResult.evidence.length}` });
@@ -959,6 +968,27 @@ async function handleAgentPost(request: Request, emit?: StreamEmitter) {
       output: { recoveredVia: "tavily-official-url-fallback", sources: officialEvidence.map((item) => ({ citationId: item.citationId, title: item.title, url: item.url, chars: (item.content || item.snippet || "").length })) },
     });
     nodes.push({ id: "official-fetch", label: "Official Bahrain evidence", status: "done", ms: officialResult.event.ms ?? 0, detail: `${promotedFallback.length} recovered via Tavily` });
+  }
+
+  // Tavily may retrieve the substantive text of an exact Bahrain government legislation/judgment
+  // page even when Vercel receives 403/connection blocking from that site. When the result is a
+  // high-confidence non-homepage official legal page, promote it to [O#] instead of wasting a
+  // second direct fetch and incorrectly leaving official legislation as secondary [W#] evidence.
+  const promotedOfficialSearch = promoteHighConfidenceOfficialTavilyEvidence(tavilyResult.evidence, officialEvidence);
+  if (promotedOfficialSearch.length) {
+    const merged = Array.from(new Map([...officialEvidence, ...promotedOfficialSearch].map((item) => [canonicalEvidenceUrl(item.url) || item.url, item])).values()).slice(0, 6);
+    officialEvidence = merged.map((item, index) => ({ ...item, citationId: `O${index + 1}` }));
+    debugEvents.push({
+      id: "official-tavily-promotion",
+      kind: "tool",
+      title: "official_evidence_promotion",
+      status: "done",
+      ms: 0,
+      summary: `تمت ترقية ${promotedOfficialSearch.length} نتيجة من Tavily إلى دليل رسمي [O#] لأن الرابط نفسه حكومي بحريني مباشر والمحتوى القانوني عالي الصلة. لن يُعاد طلب الصفحة المحجوبة من الخادم.`,
+      input: { candidates: promotedOfficialSearch.map((item) => ({ title: item.title, url: item.url, score: item.score })) },
+      output: { recoveredVia: "tavily-official-domain-extraction", officialSources: officialEvidence.map((item) => ({ citationId: item.citationId, title: item.title, url: item.url, chars: (item.content || item.snippet || "").length })) },
+    });
+    nodes.push({ id: "official-fetch", label: "Official Bahrain evidence", status: "done", ms: officialResult.event.ms ?? 0, detail: `${officialEvidence.length} · ${promotedOfficialSearch.length} promoted official` });
   }
 
   if (tavilyResult.evidence.length) {

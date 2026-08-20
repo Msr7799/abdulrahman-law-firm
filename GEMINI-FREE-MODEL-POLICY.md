@@ -64,3 +64,12 @@
 - The final prompt receives only distinct supplemental Tavily evidence; an exact result promoted to `[O#]` is not simultaneously exposed to Gemini as the old `[W1]` citation.
 - Model policy is re-evaluated after retrieval. If the exact governing judgment is available and the user did not request open-ended deep research, the final turn can step down from 3.6/high to 3.5/medium while preserving the stronger model for genuinely unresolved deep tasks.
 - Historical-law verification explicitly distinguishes the rule actually in force on the case date from a later replacement/corresponding statute, and arbitration QA checks the difference between a non-grievable enforcement grant order and an appealable refusal judgment.
+
+## v19 — Legal evidence hardening for labour settlements
+
+- High-confidence Bahrain government legislation/judgment pages discovered by Tavily are promoted to `[O#]` when the URL itself is an official Bahrain legal source, the page is non-generic, and the extracted legal content passes relevance/content thresholds. The debug trace records `tavily-official-domain-extraction` so the retrieval channel is never hidden.
+- This promotion occurs before `official_source_followup`, preventing a redundant 403/blocked re-fetch of an official page whose substantive text is already available from the exact official URL.
+- Grouped citations now support Arabic and English separators, including `[O1، O2]`, `[O1, W1]`, `[O1/W1]`, and separate `[O1] [W1]` forms.
+- Added `bahrain-labour-settlement-analysis`: labour settlements/releases must verify Article 5 when relevant and evidence is available, including the full temporal rule (during the contract or within three months after termination) and the distinction between rights actually covered and rights omitted by the release.
+- For vague attachment commands such as `جاوب`, the Lite router is kept even when a direct official URL is visible, because a primary judgment URL does not identify every secondary statutory issue needed for research.
+- Labour settlement routing enriches the single Tavily query with Article 5 / settlement / release terminology so the official Labour Law result can provide both the termination rule and the settlement rule without a separate Gemini call.
