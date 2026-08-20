@@ -462,68 +462,7 @@ function mergeContinuation(previous: string, next: string) {
   return `${left}\n\n${right}`;
 }
 
-
-function isGenericAttachmentCommand(message: string) {
-  const text = message.trim();
-  return text.length <= 80 && /^(?:جاوب|أجب|اجب|حلل|حل|راجع|اشرح|اقرأ|اقرا|شوف|جوف|ابدأ|ابدء|answer|analyze|analyse|review|read)(?:\s|$)/i.test(text);
-}
-
-function attachmentResearchSeed(message: string, files: File[]) {
-  if (!isGenericAttachmentCommand(message)) return message.trim();
-  const names = files
-    .map((file) => file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim())
-    .filter(Boolean)
-    .join(" ");
-  return names ? `${names} Bahrain law` : message.trim();
-}
-
-function binaryAttachmentMimeTypes(parts: Part[]) {
-  const values: string[] = [];
-  for (const part of parts) {
-    const typed = part as Part & { inlineData?: { mimeType?: string }; fileData?: { mimeType?: string } };
-    const mimeType = typed.inlineData?.mimeType || typed.fileData?.mimeType;
-    if (mimeType) values.push(mimeType.toLowerCase());
-  }
-  return [...new Set(values)];
-}
-
-function wantsCodeExecution(message: string) {
-  return /(?:python|بايثون|كود|code|احسب|حساب|حسابات|إحصاء|احصاء|statistics|تحليل بيانات|csv|spreadsheet|جدول بيانات)/i.test(message);
-}
-
-type GenerationToolPolicy = {
-  codeExecutionEnabled: boolean;
-  codeExecutionReason: string;
-  binaryMimeTypes: string[];
-};
-
-function generationToolPolicy(message: string, parts: Part[]): GenerationToolPolicy {
-  const binaryMimeTypes = binaryAttachmentMimeTypes(parts);
-  const hasPdf = binaryMimeTypes.includes("application/pdf");
-  const requested = wantsCodeExecution(message);
-
-  if (hasPdf) {
-    return {
-      codeExecutionEnabled: false,
-      codeExecutionReason: "تم تعطيل Code Execution لهذه الجولة لأن Gemini لا يقبل application/pdf مع أداة codeExecution في نفس generateContent. يبقى PDF متاحاً للنموذج للتحليل مباشرة.",
-      binaryMimeTypes,
-    };
-  }
-  if (!requested) {
-    return {
-      codeExecutionEnabled: false,
-      codeExecutionReason: "لم يطلب المستخدم حسابات أو تنفيذ كود، لذلك لم تُفعّل أداة Code Execution لتقليل التعقيد واستهلاك الأدوات.",
-      binaryMimeTypes,
-    };
-  }
-  return {
-    codeExecutionEnabled: true,
-    codeExecutionReason: "تم تفعيل Code Execution لأن الطلب يحتاج حسابات/كود ولا توجد مرفقات PDF غير متوافقة معها.",
-    binaryMimeTypes,
-  };
-}
-
-async function generate(prompt: string, files: Part[], signal: AbortSignal, activeSkillIds: string[], policy: GeminiModelPolicy, toolPolicy: GenerationToolPolicy) {
+async function generate(prompt: string, files: Part[], signal: AbortSignal, activeSkillIds: string[], policy: GeminiModelPolicy) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY_MISSING");
   const ai = new GoogleGenAI({ apiKey });
@@ -571,7 +510,7 @@ async function generate(prompt: string, files: Part[], signal: AbortSignal, acti
               ...(usesModernGeminiConfig(model) ? {} : { temperature: 0.18, topP: 0.82 }),
               maxOutputTokens,
               thinkingConfig: thinkingConfig as never,
-              ...(toolPolicy.codeExecutionEnabled ? { tools: [{ codeExecution: {} }] } : {}),
+              tools: [{ codeExecution: {} }],
               abortSignal: signal,
             },
           }),
@@ -604,13 +543,13 @@ async function generate(prompt: string, files: Part[], signal: AbortSignal, acti
         if (!answer) throw new Error(`GEMINI_EMPTY_RESPONSE${finishReason ? `:${finishReason}` : ""}`);
 
         if (finishReason !== "MAX_TOKENS") {
-          return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "STOP", finishMessage, outputTokens, thoughtTokens, thoughtSummary, continuations, truncated: false, thinkingBudget, requestAttempts, toolPolicy };
+          return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "STOP", finishMessage, outputTokens, thoughtTokens, thoughtSummary, continuations, truncated: false, thinkingBudget, requestAttempts };
         }
 
         if (continuationIndex < maxContinuations) continuations += 1;
       }
 
-      if (answer) return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "MAX_TOKENS", finishMessage, outputTokens, thoughtTokens, thoughtSummary, continuations, truncated: true, thinkingBudget, requestAttempts, toolPolicy };
+      if (answer) return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "MAX_TOKENS", finishMessage, outputTokens, thoughtTokens, thoughtSummary, continuations, truncated: true, thinkingBudget, requestAttempts };
     } catch (error) {
       lastError = error;
       if (error instanceof GeminiRequestError) requestAttempts.push(...error.attempts);
@@ -657,8 +596,7 @@ export async function POST(request: Request) {
 
   started = Date.now();
   const cases = await getCases(idToken);
-  const initialResearchSeed = attachmentResearchSeed(parsed.message, parsed.files);
-  const hybridRag = await rankCasesHybrid(cases, initialResearchSeed, request.signal, 6);
+  const hybridRag = await rankCasesHybrid(cases, parsed.message, request.signal, 6);
   const ranked = hybridRag.ranked;
   nodes.push({ id: "rag", label: "Case RAG · Gemini Embeddings", status: cases.length ? "done" : "skipped", ms: Date.now() - started, detail: `${ranked.length}/${cases.length} · ${hybridRag.debug.model}${hybridRag.debug.fallback ? " · lexical fallback" : ""}` });
   debugEvents.push({
@@ -670,7 +608,7 @@ export async function POST(request: Request) {
     summary: hybridRag.debug.fallback
       ? "تعذر الترتيب الدلالي بالـ embeddings، فاستمر الوكيل تلقائياً بالبحث النصي حتى لا يتوقف الطلب."
       : `تم ترتيب القضايا هجينيًا: تشابه دلالي عبر ${hybridRag.debug.model} + مطابقة نصية، باستدعاء Embedding واحد فقط.`,
-    input: { query: initialResearchSeed, originalQuestion: parsed.message, totalCases: cases.length, candidates: hybridRag.debug.candidates, dimensions: hybridRag.debug.dimensions },
+    input: { query: parsed.message, totalCases: cases.length, candidates: hybridRag.debug.candidates, dimensions: hybridRag.debug.dimensions },
     output: hybridRag.debug,
   });
 
@@ -707,7 +645,7 @@ export async function POST(request: Request) {
   debugEvents.push(preflight.event);
   nodes.push({ id: "research-router", label: "Legal research router", status: preflight.event.status, ms: preflight.event.ms ?? 0, detail: preflight.plan?.searchQuery ? "query+anchors" : undefined });
   const directOfficialUrls = [...new Set([...rawOfficialUrls, ...(preflight.plan?.officialUrls ?? [])])].slice(0, 6);
-  const routedResearchText = `${preflight.plan?.searchQuery || initialResearchSeed} ${preflight.plan?.legalTopics.join(" ") || ""} ${preflight.plan?.articleNumbers.join(" ") || ""} ${preflight.plan?.caseReferences.join(" ") || ""}`.trim();
+  const routedResearchText = `${preflight.plan?.searchQuery || parsed.message} ${preflight.plan?.legalTopics.join(" ") || ""} ${preflight.plan?.articleNumbers.join(" ") || ""} ${preflight.plan?.caseReferences.join(" ") || ""}`.trim();
 
   // Node 2: fetch exact Bahrain official sources before any broad search.
   const officialResult = await fetchOfficialEvidence(directOfficialUrls, `${routedResearchText}\n${parsed.files.map((file) => file.name).join(" ")}`, request.signal);
@@ -751,7 +689,7 @@ export async function POST(request: Request) {
   const visualSearch = /صور|صورة|مرئي|خريطة|اعرض.*صور|image|images|photo|photos|visual|map/i.test(parsed.message);
   const shouldTavily = parsed.webSearch || (legalResearchIntent && officialResult.evidence.length === 0);
   const tavilyResult = shouldTavily
-    ? await tavilyLegalSearch({ query: preflight.plan?.searchQuery || initialResearchSeed, contextHint: officialHint || routedResearchText || directOfficialUrls.join(" "), signal: request.signal, visual: visualSearch })
+    ? await tavilyLegalSearch({ query: preflight.plan?.searchQuery || parsed.message, contextHint: officialHint || routedResearchText || directOfficialUrls.join(" "), signal: request.signal, visual: visualSearch })
     : { evidence: [] as ResearchEvidence[], images: [] as AgentImage[], event: { id: "tavily", kind: "tool", title: "tavily_search", status: "skipped", ms: 0, summary: "تم تجاوز Tavily لأن المصدر الرسمي المباشر متاح والبحث الخارجي غير مطلوب.", input: { webSearch: parsed.webSearch, officialEvidence: officialResult.evidence.length }, output: { accepted: 0 } } satisfies ResearchDebugEvent };
   debugEvents.push(tavilyResult.event);
   nodes.push({ id: "web", label: "Tavily · relevance gate", status: tavilyResult.event.status, ms: tavilyResult.event.ms ?? 0, detail: `${tavilyResult.evidence.length}` });
@@ -910,22 +848,10 @@ ${siteDisplayedNewsContext(homepageNews)}
 BAHRAIN LOGO DIRECTORY:
 ${logoAccess.context}`;
 
-  const toolPolicy = generationToolPolicy(parsed.message, preparedFiles.parts);
-  debugEvents.push({
-    id: "tool-compatibility",
-    kind: "tool",
-    title: "tool_compatibility_guard",
-    status: toolPolicy.codeExecutionEnabled ? "done" : "skipped",
-    ms: 0,
-    summary: toolPolicy.codeExecutionReason,
-    input: { requestedCodeExecution: wantsCodeExecution(parsed.message), attachmentMimeTypes: toolPolicy.binaryMimeTypes },
-    output: { codeExecutionEnabled: toolPolicy.codeExecutionEnabled },
-  });
-
   started = Date.now();
   try {
-    const result = await generate(prompt, preparedFiles.parts, request.signal, activeSkillIds, modelPolicy, toolPolicy);
-    nodes.push({ id: "code", label: "Python sandbox", status: result.executableCode || result.codeExecutionResult ? "done" : "skipped", ms: 0, detail: result.executableCode ? "executed" : result.toolPolicy.codeExecutionEnabled ? "available · unused" : "disabled for this request" });
+    const result = await generate(prompt, preparedFiles.parts, request.signal, activeSkillIds, modelPolicy);
+    nodes.push({ id: "code", label: "Python sandbox", status: result.executableCode || result.codeExecutionResult ? "done" : "skipped", ms: 0, detail: result.executableCode ? "executed" : undefined });
     const geminiRetryCount = result.requestAttempts.filter((attempt) => attempt.status === "retry").length;
     const geminiWaitMs = result.requestAttempts.reduce((sum, attempt) => sum + attempt.pacedMs + attempt.backoffMs, 0);
     nodes.push({
@@ -1003,7 +929,7 @@ ${logoAccess.context}`;
     const finalAnswer = `${result.text}${qualityWarning(deterministicQuality, semanticQuality)}`;
     const researchSources: AgentSource[] = allResearchEvidence.map(({ citationId, sourceType, title, url, snippet, score }) => ({ citationId, sourceType, title, url, snippet, score }));
     const newsSources = curatedNewsSources.length ? curatedNewsSources : isLegalNewsQuery(parsed.message) ? legalNewsForAgent([...todayNews, ...homepageNews]).sources.map((source, index) => ({ ...source, citationId: `N${index + 1}`, sourceType: "news" as const })) : [];
-    return NextResponse.json({ ok: true, answer: finalAnswer, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, quality: { deterministic: deterministicQuality, semantic: semanticQuality }, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated, workload: modelPolicy.workload, modelChain: modelPolicy.models, thinkingLevel: modelPolicy.thinkingLevel, toolPolicy: result.toolPolicy }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
+    return NextResponse.json({ ok: true, answer: finalAnswer, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, quality: { deterministic: deterministicQuality, semantic: semanticQuality }, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated, workload: modelPolicy.workload, modelChain: modelPolicy.models, thinkingLevel: modelPolicy.thinkingLevel }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : "AI_ERROR";
     const diagnosed = rawMessage === "GEMINI_API_KEY_MISSING"

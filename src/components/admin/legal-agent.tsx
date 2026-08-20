@@ -112,6 +112,163 @@ function prettyDebugValue(value: unknown) {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
+function copyCodeFence(value: unknown, language = "json") {
+  const rendered = prettyDebugValue(value);
+  return `\`\`\`${language}\n${rendered}\n\`\`\``;
+}
+
+function buildCompleteCopyText(message: ChatMessage, userMessage: ChatMessage | undefined, ar: boolean) {
+  const lines: string[] = [];
+  const hr = "---";
+  const statusLabel = (status: NodeResult["status"] | DebugEvent["status"]) => status === "done" ? "DONE" : status === "error" ? "ERROR" : "SKIPPED";
+
+  lines.push(ar ? "# سجل طلب الوكيل القانوني" : "# Legal Agent Response Record");
+  lines.push("");
+
+  if (userMessage) {
+    lines.push(ar ? "## طلب المستخدم" : "## User request");
+    lines.push("");
+    lines.push(userMessage.content || (ar ? "(بدون نص)" : "(no text)"));
+    if (userMessage.attachments?.length) {
+      lines.push("");
+      lines.push(ar ? "### المرفقات" : "### Attachments");
+      for (const attachment of userMessage.attachments) {
+        lines.push(`- ${attachment.name} · ${attachment.type || "unknown"} · ${formatBytes(attachment.size)}`);
+      }
+    }
+    lines.push("");
+    lines.push(hr);
+    lines.push("");
+  }
+
+  if (message.debugEvents?.length) {
+    lines.push(ar ? "## تتبّع الوكيل / الديباق" : "## Agent trace / debug");
+    lines.push("");
+    lines.push(ar ? "> ملخصات التفكير والأدوات والمهارات والتحقق، وليست سلسلة التفكير الخام." : "> Reasoning summaries, tools, skills and validation traces; not raw chain-of-thought.");
+    lines.push("");
+    for (const event of message.debugEvents) {
+      const kind = event.kind === "thinking" ? (ar ? "تفكير" : "Thinking") : event.kind === "tool" ? (ar ? "أداة" : "Tool") : event.kind === "skill" ? (ar ? "مهارة" : "Skill") : event.kind === "quota" ? (ar ? "حماية الكوتا" : "Quota guard") : (ar ? "تحقق" : "Validation");
+      lines.push(`### ${kind}: ${event.title}`);
+      lines.push(`- ${ar ? "الحالة" : "Status"}: ${statusLabel(event.status)}`);
+      if (typeof event.ms === "number") lines.push(`- ${ar ? "المدة" : "Duration"}: ${event.ms}ms`);
+      if (event.summary) lines.push(`- ${ar ? "الملخص" : "Summary"}: ${event.summary}`);
+      if (event.input !== undefined) {
+        lines.push("");
+        lines.push("**INPUT**");
+        lines.push("");
+        lines.push(copyCodeFence(event.input));
+      }
+      if (event.output !== undefined) {
+        lines.push("");
+        lines.push("**OUTPUT**");
+        lines.push("");
+        lines.push(copyCodeFence(event.output));
+      }
+      lines.push("");
+    }
+    lines.push(hr);
+    lines.push("");
+  }
+
+  if (message.nodes?.length) {
+    lines.push(ar ? "## مسار التنفيذ" : "## Execution nodes");
+    lines.push("");
+    for (const node of message.nodes) {
+      lines.push(`- [${statusLabel(node.status)}] ${node.label} · ${node.ms}ms${node.detail ? ` · ${node.detail}` : ""}`);
+    }
+    lines.push("");
+    lines.push(hr);
+    lines.push("");
+  }
+
+  lines.push(ar ? "## الإجابة" : "## Answer");
+  lines.push("");
+  lines.push(message.content);
+  lines.push("");
+
+  if (message.code || message.codeResult) {
+    lines.push(hr);
+    lines.push("");
+    lines.push(ar ? "## تنفيذ Python" : "## Python execution");
+    lines.push("");
+    if (message.code) {
+      lines.push(ar ? "### الكود" : "### Code");
+      lines.push("");
+      lines.push(copyCodeFence(message.code, "python"));
+      lines.push("");
+    }
+    if (message.codeResult) {
+      lines.push(ar ? "### الناتج" : "### Output");
+      lines.push("");
+      lines.push(copyCodeFence(message.codeResult, "text"));
+      lines.push("");
+    }
+  }
+
+  if (message.caseMatches?.length) {
+    lines.push(hr);
+    lines.push("");
+    lines.push(ar ? `## القضايا المشار إليها (${message.caseMatches.length})` : `## Referenced cases (${message.caseMatches.length})`);
+    lines.push("");
+    message.caseMatches.forEach((item, index) => {
+      lines.push(`### [C${index + 1}] ${item.caseNumber}/${item.caseYear} · ${item.caseType}`);
+      const rows: Array<[string, string | undefined]> = [
+        [ar ? "الموكل" : "Client", item.clientName],
+        [ar ? "المحكمة" : "Court", item.court],
+        [ar ? "الحالة" : "Status", item.status],
+        [ar ? "المتهم/الخصم" : "Accused/opponent", item.accusedName],
+        [ar ? "المجني عليه" : "Victim", item.victimName],
+        [ar ? "القاضي/الهيئة" : "Judge/panel", item.judgeName],
+        [ar ? "الجلسة القادمة" : "Next hearing", item.nextHearing],
+        [ar ? "الحكم" : "Judgment", item.judgment],
+        [ar ? "الملاحظات" : "Notes", item.notes],
+      ];
+      for (const [label, value] of rows) if (value) lines.push(`- ${label}: ${value}`);
+      lines.push(`- ${ar ? "درجة الصلة" : "Relevance score"}: ${item.score}`);
+      lines.push("");
+    });
+  }
+
+  if (message.sources?.length) {
+    lines.push(hr);
+    lines.push("");
+    lines.push(ar ? `## مصادر البحث (${message.sources.length})` : `## Search sources (${message.sources.length})`);
+    lines.push("");
+    for (const source of message.sources) {
+      const id = source.citationId ? `[${source.citationId}] ` : "";
+      const type = source.sourceType ? ` · ${source.sourceType}` : "";
+      const score = typeof source.score === "number" ? ` · relevance ${source.score.toFixed(1)}` : "";
+      lines.push(`- ${id}${source.title}${type}${score}`);
+      lines.push(`  ${source.url}`);
+      if (source.snippet) lines.push(`  ${source.snippet}`);
+    }
+    lines.push("");
+  }
+
+  if (message.images?.length) {
+    lines.push(hr);
+    lines.push("");
+    lines.push(ar ? `## صور نتائج البحث (${message.images.length})` : `## Search images (${message.images.length})`);
+    lines.push("");
+    message.images.forEach((image, index) => {
+      lines.push(`- ${index + 1}. ${image.description || (ar ? "صورة" : "Image")}: ${image.displayUrl || image.url}`);
+    });
+    lines.push("");
+  }
+
+  if (message.model || message.generation) {
+    lines.push(hr);
+    lines.push("");
+    lines.push(ar ? "## معلومات التوليد" : "## Generation metadata");
+    lines.push("");
+    if (message.model) lines.push(`- Model: ${message.model}`);
+    if (message.generation) lines.push(copyCodeFence(message.generation));
+    lines.push("");
+  }
+
+  return lines.join("\n").trim();
+}
+
 function DebugTrace({ events, nodes, ar }: { events?: DebugEvent[]; nodes?: NodeResult[]; ar: boolean }) {
   if ((!events || events.length === 0) && (!nodes || nodes.length === 0)) return null;
   return (
@@ -596,11 +753,16 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
   }
 
   async function copyAnswer(message: ChatMessage) {
+    const assistantIndex = messages.findIndex((item) => item.id === message.id);
+    const userMessage = assistantIndex > 0
+      ? [...messages.slice(0, assistantIndex)].reverse().find((item) => item.role === "user")
+      : undefined;
+    const copyText = buildCompleteCopyText(message, userMessage, ar);
     try {
-      await navigator.clipboard.writeText(message.content);
+      await navigator.clipboard.writeText(copyText);
     } catch {
       const textarea = document.createElement("textarea");
-      textarea.value = message.content; textarea.style.position = "fixed"; textarea.style.opacity = "0";
+      textarea.value = copyText; textarea.style.position = "fixed"; textarea.style.opacity = "0";
       document.body.appendChild(textarea); textarea.select(); document.execCommand("copy"); textarea.remove();
     }
     setCopiedMessageId(message.id);
@@ -760,7 +922,7 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
                 {answerSettled && message.sources && message.sources.length > 0 && <details className="mt-5 rounded-md border border-white/8 bg-white/[.02] p-3"><summary className="cursor-pointer text-xs font-bold text-[#d0ad69]">{ar ? `مصادر البحث (${message.sources.length})` : `Search sources (${message.sources.length})`}</summary><div className="mt-2 grid gap-2">{message.sources.map((source) => { const favicon = faviconUrl(source.url); return <a id={source.citationId ? `source-${message.id}-${source.citationId}` : undefined} key={`${source.citationId ?? "src"}-${source.url}`} href={source.url} target="_blank" rel="noreferrer noopener" className="focus-ring flex min-w-0 scroll-mt-24 items-start gap-2 rounded-md border border-white/8 p-3 text-xs text-white/65 hover:border-[#b89555]/40 hover:text-white">{source.citationId && <span className={`shrink-0 rounded-sm border px-1.5 py-0.5 text-[9px] font-bold ${source.sourceType === "official" ? "border-emerald-400/25 bg-emerald-400/8 text-emerald-300" : source.sourceType === "tavily" ? "border-violet-400/25 bg-violet-400/8 text-violet-300" : "border-sky-400/20 bg-sky-400/8 text-sky-300"}`}>[{source.citationId}]</span>}{favicon ? <Image src={favicon} alt="" width={16} height={16} unoptimized className="mt-0.5 size-4 shrink-0" /> : <ExternalLink className="mt-0.5 shrink-0" size={14} />}<span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]"><strong className="block font-medium">{source.title}</strong>{typeof source.score === "number" && <small className="mt-1 block text-[9px] opacity-45">relevance {source.score.toFixed(1)}</small>}</span><ExternalLink className="ms-auto mt-0.5 shrink-0 opacity-40" size={12} /></a>; })}</div></details>}
                 {answerSettled && message.images && message.images.length > 0 && <details className="mt-5 border border-white/8 bg-white/[.02] p-3"><summary className="flex cursor-pointer items-center gap-2 text-xs font-bold text-[#d0ad69]"><ImageIcon size={14} />{ar ? `صور من نتائج البحث (${message.images.length})` : `Images from search (${message.images.length})`}</summary><div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">{message.images.map((image, index) => <SearchImageCard key={image.url} image={image} featured={index === 0 && message.images!.length > 2} ar={ar} />)}</div></details>}
                 {answerSettled && message.model && <p className="mt-4 text-[10px] text-white/25" dir="ltr">{message.model}</p>}
-                {answerSettled && message.role === "assistant" && message.id !== "welcome" && <div className="mt-3 flex items-center justify-end gap-1 border-t border-white/8 pt-2"><AgentButton type="button" onClick={() => void copyAnswer(message)} title={ar ? "نسخ الإجابة" : "Copy answer"} aria-label={ar ? "نسخ الإجابة" : "Copy answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white">{copiedMessageId === message.id ? <Check className="text-emerald-300" size={16} /> : <Copy size={16} />}</AgentButton><AgentButton type="button" disabled={responseActive || cooldown > 0} onClick={() => retryAssistant(message.id, Date.now())} title={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} aria-label={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white disabled:opacity-30"><RotateCcw size={16} /></AgentButton></div>}
+                {answerSettled && message.role === "assistant" && message.id !== "welcome" && <div className="mt-3 flex items-center justify-end gap-1 border-t border-white/8 pt-2"><AgentButton type="button" onClick={() => void copyAnswer(message)} title={ar ? "نسخ الرد الكامل مع الديباق والمصادر" : "Copy full response with debug and sources"} aria-label={ar ? "نسخ الرد الكامل مع الديباق والمصادر" : "Copy full response with debug and sources"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white">{copiedMessageId === message.id ? <Check className="text-emerald-300" size={16} /> : <Copy size={16} />}</AgentButton><AgentButton type="button" disabled={responseActive || cooldown > 0} onClick={() => retryAssistant(message.id, Date.now())} title={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} aria-label={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white disabled:opacity-30"><RotateCcw size={16} /></AgentButton></div>}
               </article>
               );
             })}
