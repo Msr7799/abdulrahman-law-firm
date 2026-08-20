@@ -11,7 +11,7 @@ import { getLegalNews, isLegalNewsQuery, legalNewsForAgent, periodFromQuery } fr
 import { bahrainLogoDirectorySummary, searchBahrainLogoDirectory } from "@/lib/bahrain-logo-directory";
 import type { LegalNewsItem, LegalNewsLogo } from "@/types/legal-news";
 import { compressPdfForAi, type PdfCompressionReport } from "@/lib/pdf-compressor";
-import { canonicalEvidenceUrl, evidenceContext, extractOfficialUrls, fetchOfficialEvidence, isOfficialBahrainUrl, promoteHighConfidenceOfficialTavilyEvidence, researchPlanSummary, sameEvidenceUrl, selectLegalSkillIds, tavilyLegalSearch, validateEvidenceCitations, type ResearchDebugEvent, type ResearchEvidence } from "@/lib/legal-research";
+import { canonicalEvidenceUrl, criticalEvidenceAnchors, evidenceContext, extractOfficialUrls, fetchOfficialEvidence, isOfficialBahrainUrl, promoteHighConfidenceOfficialTavilyEvidence, researchPlanSummary, sameEvidenceUrl, selectLegalSkillIds, tavilyLegalSearch, validateEvidenceCitations, type ResearchDebugEvent, type ResearchEvidence } from "@/lib/legal-research";
 import { diagnoseGeminiError, GeminiRequestError, runGeminiRequest, type GeminiAttemptTrace } from "@/lib/gemini-request-manager";
 import { selectGeminiModelPolicy, type GeminiModelPolicy } from "@/lib/gemini-model-policy";
 import { rankCasesHybrid, type HybridCaseMatch } from "@/lib/case-embedding-rag";
@@ -239,7 +239,7 @@ async function preflightResearch(message: string, files: File[], signal: AbortSi
 
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const parts: Part[] = [{ text: `USER QUESTION:\n${message}\n\nReturn JSON only. Read the attachments only to ROUTE legal research, not to answer the case. Extract ONLY official URLs actually visible in the files/question; never invent a URL. Produce a concise exact searchQuery using case numbers, article numbers, court names, legislation names, and distinctive legal phrases. If a Bahrain labour attachment visibly raises a settlement/mukhalasa/waiver/release issue (تسوية، مخالصة، صلح، إبراء، تنازل), preserve that issue in legalTopics/searchQuery and include Article 5 of the Bahrain Labour Law as a verification target; this is only a research-routing target, not a conclusion. If the attachment concerns lawyers + AML/CFT (غسل الأموال/تمويل الإرهاب/المحاماة), preserve the exact ministerial decision number, AML decree-law number, professional-confidentiality/right-of-defence issues, equality, and forced-labour issues in searchQuery/legalTopics, and suggest bahrain-lawyers-aml-analysis. Do not invent constitutional article numbers that are not visible in the attachment. JSON shape: {"officialUrls":[],"searchQuery":"","legalTopics":[],"articleNumbers":[],"caseReferences":[],"suggestedSkillIds":[]}. suggestedSkillIds may only use: bahrain-legislation-verification, bahrain-labour-settlement-analysis, bahrain-lawyers-aml-analysis, case-file-analysis, judicial-egovernment-navigation, legal-document-review, source-and-citation-discipline, constitutional-review-analysis, bahrain-judgment-research.` }];
+    const parts: Part[] = [{ text: `USER QUESTION:\n${message}\n\nReturn JSON only. Read the attachments only to ROUTE legal research, not to answer the case. Extract ONLY official URLs actually visible in the files/question; never invent a URL. Produce a concise exact searchQuery using case numbers, article numbers, court names, legislation names, and distinctive legal phrases. If a Bahrain labour attachment visibly raises a settlement/mukhalasa/waiver/release issue (تسوية، مخالصة، صلح، إبراء، تنازل), preserve that issue in legalTopics/searchQuery and include Article 5 of the Bahrain Labour Law as a verification target; this is only a research-routing target, not a conclusion. If the attachment concerns lawyers + AML/CFT (غسل الأموال/تمويل الإرهاب/المحاماة), preserve the exact ministerial decision number, AML decree-law number, professional-confidentiality/right-of-defence issues, equality, and forced-labour issues in searchQuery/legalTopics, and suggest bahrain-lawyers-aml-analysis. If the attachment concerns mediation + arbitration (وساطة/وسيط/توفيق with تحكيم/شرط التحكيم), preserve the exact multi-tier clause issue, settlement/recommendation distinction, enforceability/sند تنفيذي issue, exact case number, and suggest bahrain-mediation-arbitration-analysis. Do NOT suggest judicial-egovernment-navigation unless the USER QUESTION itself asks how to file/register/submit/track/use an electronic judicial service. Do not invent constitutional article numbers that are not visible in the attachment. JSON shape: {"officialUrls":[],"searchQuery":"","legalTopics":[],"articleNumbers":[],"caseReferences":[],"suggestedSkillIds":[]}. suggestedSkillIds may only use: bahrain-legislation-verification, bahrain-labour-settlement-analysis, bahrain-lawyers-aml-analysis, bahrain-mediation-arbitration-analysis, case-file-analysis, judicial-egovernment-navigation, legal-document-review, source-and-citation-discipline, constitutional-review-analysis, bahrain-judgment-research.` }];
     for (const file of files) {
       const mimeType = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream");
       if (allowedTextTypes.has(mimeType)) {
@@ -296,7 +296,10 @@ async function preflightResearch(message: string, files: File[], signal: AbortSi
       legalTopics: strings(parsed.legalTopics),
       articleNumbers: strings(parsed.articleNumbers),
       caseReferences: strings(parsed.caseReferences),
-      suggestedSkillIds: strings(parsed.suggestedSkillIds),
+      suggestedSkillIds: strings(parsed.suggestedSkillIds).filter((id) => {
+        if (id !== "judicial-egovernment-navigation") return true;
+        return /(?:كيف|شلون|طريقة|خطوات|تقديم|تسجيل|رفع|إيداع|ايداع|متابعة|متابعه|حجز|خدمة|خدمه|معاملة|معامله|إلكتروني|الكتروني|service|egovernment)/i.test(message);
+      }),
     };
     return {
       plan,
@@ -465,6 +468,11 @@ Rules:
 33. When the official judgment itself states the actual monetary/dispositive result, describe it as the result reached by the court, not merely as a "مرجحة" prediction. Reserve probabilistic language for analogous/new cases.
 34. Lawyers + AML/CFT: do not describe lawyer-client confidentiality as "absolute" unless the supplied authority literally supports that. Distinguish litigation/defence work from client transactions that the governing AML instrument actually regulates. Verify ministerial competence, professional-confidentiality limits, equality, and forced-labour arguments from the judgment/statutes supplied. If a historical ministerial decision has later been repealed/replaced, keep the historical holding separate from current-law guidance.
 35. Evidence sufficiency comes before fluency: if the exact judgment URL embedded in an attachment is blocked, do not promote an unrelated Bahrain statute merely because it is official. Prefer an exact canonical-URL/case-number recovery; otherwise state the evidentiary gap rather than manufacturing a fully verified holding.
+36. Preserve NEGATION and applicability exactly. If official evidence says a statute "does not apply" to the dispute but its rules are consistent with the court's reasoning, never rewrite that as "the dispute is governed by" that statute. State both propositions separately and cite the judgment.
+37. Operative-disposition lock: when the official judgment supplies an exact disposition, preserve the court's procedural term. "عدم سماع الدعوى" is not interchangeable with "عدم قبول الدعوى"; likewise do not swap rejection/acceptance, annulment/cassation, or other dispositive verbs for stylistic variety.
+38. In mediation/arbitration analysis, avoid categorical overstatement. Say that a mediator does not impose a solution; an arbitrator derives adjudicative authority from the arbitration agreement and issues a binding award within that mandate. Do not call the arbitrator's authority "complete judicial power" unless the authority says so.
+39. A mediator recommendation should be described in the factual/legal posture proved by the evidence. If the judgment holds that the recommendation alone, without a later settlement, is not an executable title, say exactly that rather than "never executable under any circumstances".
+40. CRITICAL OFFICIAL EVIDENCE ANCHORS supplied in the user prompt are preservation constraints, not new sources. Keep their negation, temporal-applicability language, and operative-disposition terminology consistent with the cited [O#] text.
 
 ACTIVE LEGAL SKILLS:
 ${agentSkillsForPrompt(activeSkillIds)}
@@ -1207,6 +1215,21 @@ async function handleAgentPost(request: Request, emit?: StreamEmitter) {
     return NextResponse.json({ ok: false, message: attachmentError.message, nodes }, { status: attachmentError.status });
   }
 
+  const officialCriticalAnchors = criticalEvidenceAnchors(officialEvidence, 18);
+  debugEvents.push({
+    id: "evidence-anchor-guard",
+    kind: "validation",
+    title: "قفل منطوق الحكم والتعارض",
+    status: "done",
+    ms: 0,
+    summary: officialCriticalAnchors.length
+      ? `استخرجت ${officialCriticalAnchors.length} مرساة حرجة من الأدلة الرسمية لحماية النفي، والانطباق الزمني، ومصطلح منطوق الحكم قبل التوليد.`
+      : "لم تظهر عبارات منطوق/نفي حرجة قابلة للاستخراج؛ سيستمر التحقق المعتاد من الإسناد.",
+    input: { officialSources: officialEvidence.map((item) => item.citationId) },
+    output: { anchors: officialCriticalAnchors },
+  });
+  nodes.push({ id: "evidence-anchor-guard", label: "Evidence contradiction guard", status: "done", ms: 0, detail: `${officialCriticalAnchors.length} anchors` });
+
   const history = parsed.history.map((item) => `${item.role === "user" ? "User" : "Assistant"}: ${item.content}`).join("\n\n");
   const compressionContext = preparedFiles.compressionReports.length
     ? preparedFiles.compressionReports.map((item) => `${item.name}: ${item.compressed ? `compressed at ${item.dpi} DPI from ${item.originalBytes} to ${item.finalBytes} bytes (${item.reductionPercent}% reduction)` : item.reason === "signed" ? "digitally signed; original preserved" : item.reason === "engine-unavailable" ? "compression engine unavailable; original used" : "original used"}`).join("\n")
@@ -1232,6 +1255,9 @@ ${planSummary}
 
 CASE CONTEXT:
 ${caseContext(ranked) || "No relevant office case found."}
+
+CRITICAL OFFICIAL EVIDENCE ANCHORS (extracted from [O#]; preserve negation, temporal applicability, and exact disposition terminology):
+${officialCriticalAnchors.join("\n") || "No critical anchor phrase was extracted."}
 
 DIRECT OFFICIAL BAHRAIN EVIDENCE (highest authority among retrieved web evidence):
 ${evidenceContext(officialEvidence) || "No direct official source was successfully fetched."}
@@ -1374,7 +1400,7 @@ ${logoAccess.context}`;
         : qualityDisposition === "warning"
           ? "اجتازت الإجابة التحقق القانوني، مع ملاحظات تحسين غير جوهرية في موضع الإسناد أو صياغة الثقة."
           : "اجتازت الإجابة بوابة الإسناد والمصادر قبل إرجاعها للمستخدم.",
-      input: { workload: modelPolicy.workload, evidenceCount: allResearchEvidence.length, semanticVerifierRunsOnlyWhenNeeded: true },
+      input: { workload: modelPolicy.workload, evidenceCount: allResearchEvidence.length, semanticVerifierPolicy: "deep-or-failure-or-critical-official-anchors", criticalAnchorCount: deterministicQuality.criticalAnchors.length },
       output: { disposition: qualityDisposition, deterministic: deterministicQuality, semantic: semanticQuality },
     });
 

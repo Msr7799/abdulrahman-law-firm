@@ -95,3 +95,14 @@
 4. يحتفظ بسجل المحاولات والموديلات في الديباق، ولا يخفي سبب الاسترجاع.
 
 أخطاء 429/5xx تبقى خاضعة لسياسة pacing/backoff المعتادة ولا تستخدم fallback فورياً.
+
+## v22 — Evidence contradiction & disposition hardening
+
+- Added `bahrain-mediation-arbitration-analysis` for multi-tier mediation/arbitration disputes.
+- Official judgment evidence now exposes critical negation/disposition anchors to the final model and quality verifier (`لا ينطبق`, `لا يعد`, `لا تصلح`, `عدم سماع الدعوى`, `عدم قبول الدعوى`, `نقض الحكم`, etc.).
+- Added an operative-disposition lock: court terms such as `عدم سماع الدعوى` are not silently rewritten as `عدم قبول الدعوى`.
+- Added temporal-applicability protection for judgments that say a statute does not apply to the historical dispute even when its rules are consistent with the court's reasoning.
+- Tavily legal retrieval requests raw content in the same search call and extracts focused evidence windows around case terms and contradiction anchors; this improves grounding without adding a Gemini call.
+- The semantic legal-quality verifier now runs for complex/deep matters when critical official anchors exist and uses `low` thinking instead of `minimal` for a stricter claim-to-evidence pass.
+- Added deterministic evidence-consistency failures and legal-precision warnings for mediation/arbitration terminology.
+- `judicial-egovernment-navigation` is no longer accepted from the routing subagent unless the user's own question asks for an operational e-government workflow.
