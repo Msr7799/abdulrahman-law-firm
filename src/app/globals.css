@@ -926,3 +926,34 @@ button,
 .admin-news-overview .admin-news-image {
   isolation: isolate;
 }
+
+/* Targeted daylight contrast for official forms and the attachment edit card. */
+.light .admin-shell .admin-official-source {
+  color: #075f3a !important;
+  background-color: #e9f8ef !important;
+  border-color: #70bf96 !important;
+}
+.light .admin-shell .admin-official-source svg {
+  color: #07824b !important;
+}
+.light .admin-shell .admin-form-category-icon.bg-\[\#771111\],
+.light .admin-shell .admin-form-category-icon.bg-\[\#771111\] svg {
+  color: #fff !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-edit-input {
+  color: #211d19 !important;
+  background: #fffdf8 !important;
+  border-color: rgba(33, 29, 25, 0.32) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-edit-cancel {
+  color: #fff !important;
+  border-color: rgba(255, 255, 255, 0.42) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-edit-submit {
+  color: #fff !important;
+  background: #211d19 !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+}
+.light .admin-shell [data-legal-agent-root="true"] .legal-agent-edit-submit:disabled {
+  color: rgba(255, 255, 255, 0.72) !important;
+}
