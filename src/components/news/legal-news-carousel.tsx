@@ -15,7 +15,7 @@ function categoryLabel(category: LegalNewsItem["category"], ar: boolean) {
 }
 
 function dateLabel(value: string, locale: Locale) {
-  return new Intl.DateTimeFormat(locale === "ar" ? "ar-BH" : "en-GB", { day: "numeric", month: "long", year: "numeric" }).format(new Date(value));
+  return new Intl.DateTimeFormat(locale === "ar" ? "ar-BH" : "en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Bahrain" }).format(new Date(value));
 }
 
 export function LegalNewsCarousel({ locale, items }: { locale: Locale; items: LegalNewsItem[] }) {
@@ -24,8 +24,16 @@ export function LegalNewsCarousel({ locale, items }: { locale: Locale; items: Le
   const [paused, setPaused] = useState(false);
   const current = items[index];
   const Arrow = ar ? ArrowLeft : ArrowRight;
-  const today = useMemo(() => new Intl.DateTimeFormat(ar ? "ar-BH" : "en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date()), [ar]);
-  const updatedAt = useMemo(() => new Intl.DateTimeFormat(ar ? "ar-BH" : "en-GB", { hour: "2-digit", minute: "2-digit" }).format(new Date(Math.max(...items.map((item) => new Date(item.fetchedAt).valueOf())))), [ar, items]);
+  const latestFetchedAt = useMemo(() => {
+    const values = items.map((item) => new Date(item.fetchedAt).valueOf()).filter(Number.isFinite);
+    return values.length ? Math.max(...values) : 0;
+  }, [items]);
+  const today = useMemo(() => latestFetchedAt
+    ? new Intl.DateTimeFormat(ar ? "ar-BH" : "en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Bahrain" }).format(new Date(latestFetchedAt))
+    : "—", [ar, latestFetchedAt]);
+  const updatedAt = useMemo(() => latestFetchedAt
+    ? new Intl.DateTimeFormat(ar ? "ar-BH" : "en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bahrain" }).format(new Date(latestFetchedAt))
+    : "—", [ar, latestFetchedAt]);
 
   useEffect(() => {
     if (paused || items.length < 2) return;

@@ -48,7 +48,26 @@ function cleanText(value: string) {
 }
 
 function absolutizeUrl(value: string, base: string) {
-  try { return new URL(decodeHtml(value), base).toString(); } catch { return ""; }
+  const candidate = decodeHtml(value ?? "").trim();
+  if (!candidate) return "";
+  try { return new URL(candidate, base).toString(); } catch { return ""; }
+}
+
+function safeImageUrl(value: string | undefined) {
+  const candidate = (value ?? "").trim();
+  if (!candidate) return "";
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return "";
+    const path = url.pathname.toLowerCase().replace(/\/$/, "");
+    // Never hand RSS/feed/document endpoints to the browser as an image. Some
+    // feeds set session cookies and Firefox will correctly block them as images.
+    if (/(?:^|\/)(?:rss|feed|feeds|xml)(?:$|\/)/i.test(path)) return "";
+    if (/\.(?:xml|rss|html?|php|aspx?)$/i.test(path)) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 function stableId(url: string, title: string) {
@@ -153,7 +172,7 @@ function itemFromRaw(raw: {
     category: categoryFor(combined),
     verification: sourceType === "official" ? "official" : sourceType === "bna" ? "government" : "reported",
     importance: importanceFor(combined),
-    imageUrl: raw.imageUrl || undefined,
+    imageUrl: safeImageUrl(raw.imageUrl) || undefined,
     legalInstrumentNumber: inferInstrument(combined),
     gazetteNumber: inferGazette(combined),
   };
@@ -241,10 +260,10 @@ async function fetchText(url: string) {
 
 async function enrichNewsMedia(items: LegalNewsItem[]) {
   return Promise.all(items.map(async (item) => {
-    let imageUrl = item.imageUrl ?? "";
+    let imageUrl = safeImageUrl(item.imageUrl);
     if (!imageUrl) {
       const html = await fetchText(item.sourceUrl);
-      imageUrl = html ? extractPageImage(html, item.sourceUrl) : "";
+      imageUrl = html ? safeImageUrl(extractPageImage(html, item.sourceUrl)) : "";
     }
     const logos = resolveNewsLogos({
       sourceName: item.sourceName,
@@ -512,7 +531,7 @@ async function loadLegalNewsUncached() {
   return enrichNewsMedia(diversified);
 }
 
-const getCachedLegalNews = unstable_cache(loadLegalNewsUncached, ["bahrain-legal-news-v6-smart-multisource"], {
+const getCachedLegalNews = unstable_cache(loadLegalNewsUncached, ["bahrain-legal-news-v7-safe-media"], {
   revalidate: cacheSeconds(),
   tags: ["legal-news"],
 });

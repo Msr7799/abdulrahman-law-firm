@@ -18,12 +18,13 @@ export function LegalNewsOverview({ locale }: { locale: Locale }) {
   const [items, setItems] = useState<LegalNewsItem[]>([]);
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [generatedAt, setGeneratedAt] = useState("");
 
   useEffect(() => {
     let active = true;
     fetch("/api/legal-news?period=week&limit=8")
       .then((response) => response.ok ? response.json() : null)
-      .then((data) => { if (active && data?.items) setItems(data.items); })
+      .then((data) => { if (active && data?.items) { setItems(data.items); setGeneratedAt(typeof data.generatedAt === "string" ? data.generatedAt : ""); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
@@ -32,6 +33,9 @@ export function LegalNewsOverview({ locale }: { locale: Locale }) {
   const legislationCount = items.filter((item) => item.category === "legislation").length;
   const officialCount = items.filter((item) => item.verification === "official" || item.verification === "government").length;
   const currentLogos = current ? getLegalNewsLogos(current) : [];
+  const generatedDateLabel = generatedAt
+    ? new Intl.DateTimeFormat(ar ? "ar-BH" : "en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "Asia/Bahrain" }).format(new Date(generatedAt))
+    : "—";
 
   return (
     <section className="admin-news-overview border border-white/10 bg-[#0c1c21]">
@@ -40,7 +44,7 @@ export function LegalNewsOverview({ locale }: { locale: Locale }) {
           <div className="flex items-center gap-2 text-xs font-bold text-[#d0ad69]"><Newspaper size={16} />{ar ? "الموجز القانوني" : "LEGAL BRIEFING"}</div>
           <h2 className="display mt-2 text-2xl sm:text-3xl">{ar ? "آخر المستجدات في البحرين" : "Latest Bahrain legal updates"}</h2>
         </div>
-        <div className="flex items-center gap-2 text-[10px] text-white/35"><CalendarDays size={14} />{new Intl.DateTimeFormat(ar ? "ar-BH" : "en-GB", { weekday: "long", day: "numeric", month: "long" }).format(new Date())}</div>
+        <div className="flex items-center gap-2 text-[10px] text-white/35"><CalendarDays size={14} />{generatedDateLabel}</div>
       </div>
       <div className="grid gap-px bg-white/10 sm:grid-cols-3">
         <div className="bg-[#0c1c21] p-5 sm:p-6"><span className="text-[10px] text-white/35">{ar ? "أخبار هذا الأسبوع" : "This week"}</span><strong className="admin-news-stat mt-1 block text-3xl text-[#ead39f]">{loading ? "…" : items.length}</strong></div>

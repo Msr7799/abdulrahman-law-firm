@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { AtSign, MapPin, Phone } from "lucide-react";
 import type { Locale } from "@/config/site";
 import { siteConfig } from "@/config/site";
@@ -10,6 +11,9 @@ import { getMessages } from "@/messages";
 export function Footer({ locale }: { locale: Locale }) {
   const pathname = usePathname();
   const m = getMessages(locale);
+  const [year, setYear] = useState<number | null>(null);
+
+  useEffect(() => setYear(new Date().getFullYear()), []);
 
   if (/^\/(ar|en)\/admin(?:\/|$)/.test(pathname)) return null;
   return (
@@ -79,7 +83,7 @@ export function Footer({ locale }: { locale: Locale }) {
       </div>
       <div className="container-site mt-12 flex flex-col gap-2 border-t border-white/10 pt-6 text-xs text-white/40 sm:flex-row sm:justify-between">
         <span>
-          © {new Date().getFullYear()} {siteConfig.shortName[locale]}
+          © {year ?? ""} {siteConfig.shortName[locale]}
         </span>
         <span>{m.common.note}</span>
       </div>
