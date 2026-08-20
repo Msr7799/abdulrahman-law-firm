@@ -14,6 +14,7 @@ import type { LegalNewsItem, LegalNewsLogo } from "@/types/legal-news";
 import { compressPdfForAi, type PdfCompressionReport } from "@/lib/pdf-compressor";
 import { evidenceContext, extractOfficialUrls, fetchOfficialEvidence, researchPlanSummary, selectLegalSkillIds, tavilyLegalSearch, validateEvidenceCitations, type ResearchDebugEvent, type ResearchEvidence } from "@/lib/legal-research";
 import { diagnoseGeminiError, GeminiRequestError, runGeminiRequest, type GeminiAttemptTrace } from "@/lib/gemini-request-manager";
+import { selectGeminiModelPolicy, type GeminiModelPolicy } from "@/lib/gemini-model-policy";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -171,11 +172,25 @@ function parseJsonObject(text: string) {
   try { return JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>; } catch { return null; }
 }
 
-async function preflightResearch(message: string, files: File[], signal: AbortSignal): Promise<{ plan: PreflightResearch | null; event: ResearchDebugEvent }> {
+function preflightModelList(policyModels?: string[]) {
+  const explicit = process.env.GEMINI_PREFLIGHT_MODELS || process.env.GEMINI_PREFLIGHT_MODEL;
+  const models = policyModels?.length
+    ? policyModels
+    : (explicit || "gemini-3.5-flash-lite,gemini-3.1-flash-lite").split(",");
+  // Router/subagent work stays on free Flash-Lite lanes only. Never burn a full Flash call here.
+  return [...new Set(models.map((model) => model.trim()).filter((model) => model && /flash-lite/i.test(model)))].slice(0, 2);
+}
+
+function usesModernGeminiConfig(model: string) {
+  return /^gemini-3(?:\.|-|$)/i.test(model) || /^gemini-[4-9](?:\.|-|$)/i.test(model);
+}
+
+async function preflightResearch(message: string, files: File[], signal: AbortSignal, policyModels?: string[]): Promise<{ plan: PreflightResearch | null; event: ResearchDebugEvent }> {
   const started = Date.now();
   const apiKey = process.env.GEMINI_API_KEY;
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
-  const inputSummary = { model: "gemini-2.5-flash-lite", files: files.map((file) => ({ name: file.name, type: file.type, bytes: file.size })), maxAttachmentBytes: 8 * 1024 * 1024 };
+  const preflightModels = preflightModelList(policyModels);
+  const inputSummary = { models: preflightModels, files: files.map((file) => ({ name: file.name, type: file.type, bytes: file.size })), maxAttachmentBytes: 8 * 1024 * 1024 };
   if (!apiKey || !files.length || totalBytes > 8 * 1024 * 1024) {
     return {
       plan: null,
@@ -203,25 +218,41 @@ async function preflightResearch(message: string, files: File[], signal: AbortSi
         parts.push({ inlineData: { data: Buffer.from(await file.arrayBuffer()).toString("base64"), mimeType } });
       }
     }
-    const preflightModel = process.env.GEMINI_PREFLIGHT_MODEL || "gemini-2.5-flash-lite";
-    const routed = await runGeminiRequest({
-      model: preflightModel,
-      operation: "legal_research_router",
-      signal,
-      maxAttempts: envInt("GEMINI_PREFLIGHT_MAX_ATTEMPTS", 3, 1, 4),
-      call: () => ai.models.generateContent({
-        model: preflightModel,
-        contents: [{ role: "user", parts }],
-        config: {
-          temperature: 0,
-          topP: 0.2,
-          maxOutputTokens: 700,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingBudget: 0 } as never,
-          abortSignal: signal,
-        },
-      }),
-    });
+    let routed: { value: { text?: string }; attempts: GeminiAttemptTrace[] } | null = null;
+    let routedModel = "";
+    let lastPreflightError: unknown;
+    for (const preflightModel of preflightModels) {
+      try {
+        const modern = usesModernGeminiConfig(preflightModel);
+        routed = await runGeminiRequest({
+          model: preflightModel,
+          operation: "legal_research_router",
+          signal,
+          maxAttempts: envInt("GEMINI_PREFLIGHT_MAX_ATTEMPTS", 3, 1, 4),
+          call: () => ai.models.generateContent({
+            model: preflightModel,
+            contents: [{ role: "user", parts }],
+            config: {
+              ...(modern ? {} : { temperature: 0, topP: 0.2 }),
+              maxOutputTokens: 700,
+              responseMimeType: "application/json",
+              ...(modern ? {} : { thinkingConfig: { thinkingBudget: 0 } as never }),
+              abortSignal: signal,
+            },
+          }),
+        });
+        routedModel = preflightModel;
+        break;
+      } catch (error) {
+        lastPreflightError = error;
+        const diagnosed = error instanceof GeminiRequestError ? error.info : diagnoseGeminiError(error);
+        const modelUnavailable = diagnosed.status === 404 || /NOT_FOUND|no longer available to new users|model.*not.*available/i.test(`${diagnosed.code ?? ""} ${diagnosed.providerMessage}`);
+        // Compatibility failure or a hard per-model daily quota may use the next FREE Lite fallback.
+        // Transient RPM/TPM limits are already retried with backoff and must not trigger a burst to another model.
+        if (!modelUnavailable && !diagnosed.dailyQuota) throw error;
+      }
+    }
+    if (!routed) throw lastPreflightError ?? new Error("NO_PREFLIGHT_MODEL_AVAILABLE");
     const response = routed.value;
     const raw = response.text ?? "";
     const parsed = parseJsonObject(raw);
@@ -245,9 +276,9 @@ async function preflightResearch(message: string, files: File[], signal: AbortSi
         title: "legal_research_router",
         status: "done",
         ms: Date.now() - started,
-        summary: "استخدم Flash-Lite كعقدة توجيه قصيرة لاستخراج الرابط الرسمي ومفاتيح البحث من المرفق، بدون حل القضية وبدون تشغيل التفكير.",
+        summary: `استخدم ${routedModel || "Flash-Lite"} كعقدة توجيه قصيرة لاستخراج الرابط الرسمي ومفاتيح البحث من المرفق، بدون حل القضية.`,
         input: inputSummary,
-        output: { ...plan, requestAttempts: routed.attempts },
+        output: { ...plan, model: routedModel, requestAttempts: routed.attempts },
       },
     };
   } catch (error) {
@@ -400,8 +431,10 @@ SERVICE ROADMAP REFERENCE:
 ${roadmapKnowledgeForAgent()}`;
 }
 
-function modelList() {
-  return (process.env.GEMINI_MODELS ?? "gemini-2.5-flash").split(",").map((model) => model.trim()).filter((model) => model && !/pro/i.test(model)).slice(0, 2);
+function policyModelList(policy: GeminiModelPolicy) {
+  return [...new Set(policy.models)]
+    .filter((model) => model && !/pro/i.test(model))
+    .slice(0, 2);
 }
 
 function envInt(name: string, fallback: number, min: number, max: number) {
@@ -424,17 +457,17 @@ function mergeContinuation(previous: string, next: string) {
   return `${left}\n\n${right}`;
 }
 
-async function generate(prompt: string, files: Part[], signal: AbortSignal, activeSkillIds: string[]) {
+async function generate(prompt: string, files: Part[], signal: AbortSignal, activeSkillIds: string[], policy: GeminiModelPolicy) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY_MISSING");
   const ai = new GoogleGenAI({ apiKey });
-  const maxOutputTokens = envInt("GEMINI_MAX_OUTPUT_TOKENS", 8192, 4096, 16384);
-  const maxContinuations = envInt("GEMINI_MAX_CONTINUATIONS", 1, 0, 1);
-  const thinkingBudget = envInt("GEMINI_THINKING_BUDGET", 1024, 0, 4096);
+  const maxOutputTokens = envInt("GEMINI_MAX_OUTPUT_TOKENS", policy.maxOutputTokens, 2048, 16384);
+  const maxContinuations = envInt("GEMINI_MAX_CONTINUATIONS", policy.maxContinuations, 0, 1);
+  const thinkingBudget = envInt("GEMINI_THINKING_BUDGET", policy.workload === "deep" ? 2048 : policy.workload === "complex" ? 1536 : 1024, 0, 4096);
   const requestAttempts: GeminiAttemptTrace[] = [];
   let lastError: unknown;
 
-  for (const model of modelList()) {
+  for (const model of policyModelList(policy)) {
     try {
       let answer = "";
       let finishReason = "";
@@ -456,7 +489,7 @@ async function generate(prompt: string, files: Part[], signal: AbortSignal, acti
         const isLite = /flash-lite/i.test(model);
         const isGemini3 = /^gemini-3/i.test(model);
         const thinkingConfig = isGemini3
-          ? { includeThoughts: true, thinkingLevel: "low" }
+          ? { includeThoughts: true, thinkingLevel: policy.thinkingLevel }
           : { includeThoughts: true, thinkingBudget: isLite ? Math.min(512, thinkingBudget) : thinkingBudget };
 
         const managed = await runGeminiRequest({
@@ -469,8 +502,7 @@ async function generate(prompt: string, files: Part[], signal: AbortSignal, acti
             contents: [{ role: "user", parts: [{ text: continuationInstruction }, ...files] }],
             config: {
               systemInstruction: systemPrompt(activeSkillIds),
-              temperature: 0.18,
-              topP: 0.82,
+              ...(usesModernGeminiConfig(model) ? {} : { temperature: 0.18, topP: 0.82 }),
               maxOutputTokens,
               thinkingConfig: thinkingConfig as never,
               tools: [{ codeExecution: {} }],
@@ -521,7 +553,10 @@ async function generate(prompt: string, files: Part[], signal: AbortSignal, acti
       // Transient 429/503/timeouts are already retried with pacing and exponential backoff.
       // Do NOT immediately jump to another model: that was the old behavior that could turn one
       // rate-limit event into a burst of extra API requests and also hide the original error.
-      if (diagnosed.retryable || diagnosed.dailyQuota) throw error;
+      if (diagnosed.retryable) throw error;
+      // A hard daily quota on one model may fall through to the next FREE model in this role.
+      // We never do this for transient RPM/TPM 429s because that would create a request burst.
+      if (diagnosed.dailyQuota) continue;
 
       // Only compatibility/model availability failures may fall through to an explicitly configured
       // second model. The default model list now contains Flash only.
@@ -576,9 +611,19 @@ export async function POST(request: Request) {
   const rawOfficialUrls = await extractOfficialUrls(parsed.message, parsed.files);
   nodes.push({ id: "official-url", label: "Official URL extraction", status: rawOfficialUrls.length ? "done" : "skipped", ms: Date.now() - started, detail: `${rawOfficialUrls.length}` });
 
+  const initialModelPolicy = selectGeminiModelPolicy({
+    message: parsed.message,
+    files: parsed.files,
+    webSearch: parsed.webSearch,
+  });
+
   // If the PDF text is compressed and the raw URL is not recoverable, use one tiny Flash-Lite
   // routing call (<=8MB attachments only). It does not solve the case; it only extracts anchors.
-  const preflight = rawOfficialUrls.length ? { plan: null, event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "skipped", ms: 0, summary: "تم العثور على رابط رسمي حتمي؛ لا حاجة لاستهلاك طلب Flash-Lite إضافي.", input: { rawOfficialUrls }, output: { skipped: true } } satisfies ResearchDebugEvent } : await preflightResearch(parsed.message, parsed.files, request.signal);
+  const preflight = rawOfficialUrls.length
+    ? { plan: null, event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "skipped", ms: 0, summary: "تم العثور على رابط رسمي حتمي؛ لا حاجة لاستهلاك طلب Flash-Lite إضافي.", input: { rawOfficialUrls }, output: { skipped: true } } satisfies ResearchDebugEvent }
+    : !initialModelPolicy.allowPreflight
+      ? { plan: null, event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "skipped", ms: 0, summary: "سياسة النماذج صنفت الطلب كمهمة لا تحتاج Subagent تمهيدي، فتم توفير طلب Gemini من الحصة المجانية.", input: { workload: initialModelPolicy.workload }, output: { skipped: true } } satisfies ResearchDebugEvent }
+      : await preflightResearch(parsed.message, parsed.files, request.signal, initialModelPolicy.preflightModels);
   debugEvents.push(preflight.event);
   nodes.push({ id: "research-router", label: "Legal research router", status: preflight.event.status, ms: preflight.event.ms ?? 0, detail: preflight.plan?.searchQuery ? "query+anchors" : undefined });
   const directOfficialUrls = [...new Set([...rawOfficialUrls, ...(preflight.plan?.officialUrls ?? [])])].slice(0, 6);
@@ -603,6 +648,24 @@ export async function POST(request: Request) {
     });
   }
   nodes.push({ id: "skills", label: "Legal skills router", status: "done", ms: 0, detail: `${activeSkillIds.length}` });
+
+  const modelPolicy = selectGeminiModelPolicy({
+    message: parsed.message,
+    files: parsed.files,
+    webSearch: parsed.webSearch,
+    activeSkillIds,
+    officialEvidenceCount: officialResult.evidence.length,
+  });
+  nodes.push({ id: "model-policy", label: "Gemini free-tier model policy", status: "done", ms: 0, detail: `${modelPolicy.workload} · ${modelPolicy.models[0] ?? "none"}` });
+  debugEvents.push({
+    id: "model-policy",
+    kind: "thinking",
+    title: "اختيار نموذج Gemini حسب نوع الطلب",
+    status: "done",
+    summary: `تم تصنيف الطلب ${modelPolicy.workload}. النموذج الأساسي: ${modelPolicy.models[0] ?? "غير محدد"}. لا يتم استخدام 3.6 Flash إلا للطلبات العميقة/المعقدة وفق السياسة.`,
+    input: { question: parsed.message, files: parsed.files.map((file) => ({ name: file.name, bytes: file.size })), webSearch: parsed.webSearch, activeSkillIds },
+    output: { workload: modelPolicy.workload, primaryModel: modelPolicy.models[0], fallbackModels: modelPolicy.models.slice(1), preflightModels: modelPolicy.preflightModels, allowPreflight: modelPolicy.allowPreflight, thinkingLevel: modelPolicy.thinkingLevel, maxOutputTokens: modelPolicy.maxOutputTokens, maxContinuations: modelPolicy.maxContinuations, maxGeminiCalls: modelPolicy.maxGeminiCalls, reasons: modelPolicy.reasons },
+  });
 
   const legalResearchIntent = parsed.files.length > 0 || /قانون|تشريع|مادة|محكمة|قضية|حكم|دستور|طعن|استئناف|تمييز|نيابة|حقوق|legal|law|court|case|judgment|constitution|appeal/i.test(parsed.message);
   const visualSearch = /صور|صورة|مرئي|خريطة|اعرض.*صور|image|images|photo|photos|visual|map/i.test(parsed.message);
@@ -669,8 +732,11 @@ export async function POST(request: Request) {
     input: {
       userQuestionCooldownSeconds: cooldownMs / 1000,
       dailyOfficeQuestionLimit: dailyLimit,
-      preflightModel: preflight.plan ? (process.env.GEMINI_PREFLIGHT_MODEL || "gemini-2.5-flash-lite") : "skipped",
-      finalModels: modelList(),
+      preflightModel: preflight.plan ? (preflight.event.output as { model?: string } | undefined)?.model ?? modelPolicy.preflightModels[0] ?? "skipped" : "skipped",
+      workload: modelPolicy.workload,
+      finalModels: modelPolicy.models,
+      thinkingLevel: modelPolicy.thinkingLevel,
+      maxGeminiCallsForRequest: modelPolicy.maxGeminiCalls,
       flashMinIntervalMs: Number(process.env.GEMINI_FLASH_MIN_INTERVAL_MS ?? 7000),
       flashLiteMinIntervalMs: Number(process.env.GEMINI_FLASH_LITE_MIN_INTERVAL_MS ?? 4500),
       globalMinIntervalMs: Number(process.env.GEMINI_GLOBAL_MIN_INTERVAL_MS ?? 2000),
@@ -678,7 +744,7 @@ export async function POST(request: Request) {
       finalMaxAttempts: Number(process.env.GEMINI_FINAL_MAX_ATTEMPTS ?? 4),
       maxContinuations: Number(process.env.GEMINI_MAX_CONTINUATIONS ?? 1),
     },
-    output: { policy: "Conservative free-tier pacing; transient provider errors are retried before the request is allowed to fail. Gemini Pro is never selected by default." },
+    output: { policy: "Free-tier role routing: Lite for routing/light tasks, Flash for normal legal work, 3.6 Flash only for deep/complex work. Transient 429/5xx retries stay on the same model; only 404 or hard daily quota may use the next free fallback. Gemini Pro is never selected." },
   });
 
   started = Date.now();
@@ -761,7 +827,7 @@ ${logoAccess.context}`;
 
   started = Date.now();
   try {
-    const result = await generate(prompt, preparedFiles.parts, request.signal, activeSkillIds);
+    const result = await generate(prompt, preparedFiles.parts, request.signal, activeSkillIds, modelPolicy);
     nodes.push({ id: "code", label: "Python sandbox", status: result.executableCode || result.codeExecutionResult ? "done" : "skipped", ms: 0, detail: result.executableCode ? "executed" : undefined });
     const geminiRetryCount = result.requestAttempts.filter((attempt) => attempt.status === "retry").length;
     const geminiWaitMs = result.requestAttempts.reduce((sum, attempt) => sum + attempt.pacedMs + attempt.backoffMs, 0);
@@ -813,7 +879,7 @@ ${logoAccess.context}`;
 
     const researchSources: AgentSource[] = allResearchEvidence.map(({ citationId, sourceType, title, url, snippet, score }) => ({ citationId, sourceType, title, url, snippet, score }));
     const newsSources = curatedNewsSources.length ? curatedNewsSources : isLegalNewsQuery(parsed.message) ? legalNewsForAgent([...todayNews, ...homepageNews]).sources.map((source, index) => ({ ...source, citationId: `N${index + 1}`, sourceType: "news" as const })) : [];
-    return NextResponse.json({ ok: true, answer: result.text, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
+    return NextResponse.json({ ok: true, answer: result.text, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated, workload: modelPolicy.workload, modelChain: modelPolicy.models, thinkingLevel: modelPolicy.thinkingLevel }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : "AI_ERROR";
     const diagnosed = rawMessage === "GEMINI_API_KEY_MISSING"
@@ -829,7 +895,7 @@ ${logoAccess.context}`;
       status: "error",
       ms: Date.now() - started,
       summary: diagnosed.userMessage,
-      input: { models: modelList(), operation: "final_answer" },
+      input: { models: modelPolicy.models, workload: modelPolicy.workload, operation: "final_answer" },
       output: {
         httpStatus: diagnosed.status,
         code: diagnosed.code,
