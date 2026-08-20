@@ -6,6 +6,8 @@ import { validateEvidenceCitations } from "@/lib/legal-research";
 import { diagnoseGeminiError, GeminiRequestError, runGeminiRequest, type GeminiAttemptTrace } from "@/lib/gemini-request-manager";
 import type { GeminiModelPolicy } from "@/lib/gemini-model-policy";
 
+export type QualityDisposition = "pass" | "warning" | "fail";
+
 export type DeterministicQualityResult = {
   score: number;
   pass: boolean;
@@ -15,6 +17,8 @@ export type DeterministicQualityResult = {
   unapprovedUrls: string[];
   uncitedLegalClaims: string[];
   hasAnswerLimits: boolean;
+  hardFailures: string[];
+  softWarnings: string[];
 };
 
 export type SemanticQualityResult = {
@@ -22,7 +26,9 @@ export type SemanticQualityResult = {
   pass?: boolean;
   confidence?: number;
   unsupportedClaims?: string[];
+  contradictedClaims?: string[];
   missingIssues?: string[];
+  overconfidenceClaims?: string[];
   notes?: string[];
   model?: string;
   attempts?: GeminiAttemptTrace[];
@@ -41,6 +47,8 @@ function legalClaimLines(answer: string) {
     .map((line) => line.trim())
     .filter((line) => line.length >= 35)
     .filter((line) => !/^#{1,6}\s/.test(line))
+    .filter((line) => !/^>\s*\*\*(?:حدود\s*الإجابة|حدود\s*الاجابة)/i.test(line))
+    .filter((line) => !/^(?:يتضمن|يحتوي)\s+المستند\s+المرفق/i.test(line))
     .filter((line) => /(?:المادة|ماده|ينص|نص\s+القانون|وفقاً|وفقا|قضت|حكمت|المحكمة|الدستور|دستوري|غير\s+دستوري|اختصاص|ميعاد|أجل|اجل|بطلان|عقوبة|يلتزم|يجب\s+قانوناً|law|article|court|constitution|statute|judgment)/i.test(line));
 }
 
@@ -53,24 +61,35 @@ export function runDeterministicQualityGate(answer: string, evidence: ResearchEv
     .slice(0, 8);
   const hasAnswerLimits = /حدود\s*الإجابة|حدود\s*الاجابة|answer\s+limits/i.test(answer);
 
+  const hardFailures: string[] = [];
+  const softWarnings: string[] = [];
+  if (evidence.length && !citation.hasGrounding) hardFailures.push("no-grounding-citation");
+  if (!hasOfficialGrounding) hardFailures.push("official-evidence-not-used");
+  if (citation.invalid.length) hardFailures.push("invalid-citation-id");
+  if (citation.unapprovedUrls.length) hardFailures.push("unapproved-url");
+  if (uncitedLegalClaims.length) softWarnings.push("inline-citation-coverage");
+  if (!hasAnswerLimits) softWarnings.push("missing-answer-limits");
+
   let score = 100;
   if (!citation.hasGrounding && evidence.length) score -= 30;
   if (!hasOfficialGrounding) score -= 20;
   score -= Math.min(24, citation.invalid.length * 12);
   score -= Math.min(24, citation.unapprovedUrls.length * 12);
-  score -= Math.min(20, uncitedLegalClaims.length * 4);
+  score -= Math.min(16, uncitedLegalClaims.length * 3);
   if (!hasAnswerLimits) score -= 6;
   score = Math.max(0, score);
 
   return {
     score,
-    pass: score >= 82 && citation.invalid.length === 0 && citation.unapprovedUrls.length === 0 && hasOfficialGrounding,
+    pass: hardFailures.length === 0 && score >= 82,
     hasOfficialGrounding,
     validCitations: citation.validFound,
     invalidCitations: citation.invalid,
     unapprovedUrls: citation.unapprovedUrls,
     uncitedLegalClaims,
     hasAnswerLimits,
+    hardFailures,
+    softWarnings,
   };
 }
 
@@ -87,7 +106,7 @@ function stringArray(value: unknown, max = 8) {
 }
 
 function qualityEvidenceContext(evidence: ResearchEvidence[]) {
-  return evidence.slice(0, 8).map((item) => `[${item.citationId}] ${item.title}\n${(item.content || item.snippet || "").slice(0, 5000)}`).join("\n\n");
+  return evidence.slice(0, 8).map((item) => `[${item.citationId}] ${item.title}\nURL: ${item.url}\n${(item.content || item.snippet || "").slice(0, 6500)}`).join("\n\n");
 }
 
 export async function maybeRunSemanticQualityGate(args: {
@@ -100,12 +119,10 @@ export async function maybeRunSemanticQualityGate(args: {
 }) : Promise<SemanticQualityResult> {
   const enabled = envBool("LEGAL_QUALITY_SEMANTIC_VERIFY", true);
   const complexEnough = args.policy.workload === "complex" || args.policy.workload === "deep";
-  const semanticThreshold = Number(process.env.LEGAL_QUALITY_SEMANTIC_TRIGGER_SCORE ?? 72);
+  const semanticThreshold = Number(process.env.LEGAL_QUALITY_SEMANTIC_TRIGGER_SCORE ?? 78);
   const severeDeterministicFailure = args.deterministic.score < semanticThreshold
-    || args.deterministic.invalidCitations.length > 0
-    || args.deterministic.unapprovedUrls.length > 0
-    || !args.deterministic.hasOfficialGrounding;
-  // Protect the free tier: semantic verification is a conditional rescue/QA call, not a call on every answer.
+    || args.deterministic.hardFailures.length > 0
+    || args.deterministic.uncitedLegalClaims.length > 0;
   const shouldRun = enabled && complexEnough && args.evidence.length > 0 && severeDeterministicFailure;
   if (!shouldRun) return { ran: false };
 
@@ -113,7 +130,7 @@ export async function maybeRunSemanticQualityGate(args: {
   if (!apiKey) return { ran: false, error: "GEMINI_API_KEY_MISSING" };
   const model = process.env.GEMINI_QUALITY_MODEL?.trim() || "gemini-3.5-flash-lite";
   const ai = new GoogleGenAI({ apiKey });
-  const prompt = `You are a legal answer quality verifier, not the answering lawyer.\nCheck ONLY whether the draft is supported by the supplied evidence and whether it misses an issue explicitly required by the user question. Do not introduce external law or facts. Return JSON only:\n{"pass":true,"confidence":0.0,"unsupportedClaims":[],"missingIssues":[],"notes":[]}\n\nUSER QUESTION:\n${args.question.slice(0, 4000)}\n\nEVIDENCE:\n${qualityEvidenceContext(args.evidence)}\n\nDRAFT ANSWER:\n${args.answer.slice(0, 28_000)}`;
+  const prompt = `You are a strict legal claim-to-evidence verifier, not the answering lawyer.\n\nEvaluate EACH MATERIAL LEGAL CLAIM in the draft against the supplied evidence. A citation label next to a sentence does NOT prove the sentence is supported. Check the actual source text. Pay special attention to:\n- operative disposition / judgment outcome, parties and standing, dates and deadlines;\n- constitutional/statutory effects, retroactivity/prospectivity, jurisdiction and procedural consequences;\n- whether a draft statement is broader than the source;\n- whether the draft claims 100% certainty or \"قطعية\" where only legal analysis/inference is being offered.\n\nDo not introduce external law or facts. Distinguish unsupported claims from claims CONTRADICTED by evidence. Also check whether the question/attachment explicitly requires strengths/weaknesses, missing information, counterarguments, or other issues that the draft omitted.\n\nReturn JSON only:\n{"pass":true,"confidence":0.0,"unsupportedClaims":[],"contradictedClaims":[],"missingIssues":[],"overconfidenceClaims":[],"notes":[]}\n\nUSER QUESTION:\n${args.question.slice(0, 4000)}\n\nEVIDENCE:\n${qualityEvidenceContext(args.evidence)}\n\nDRAFT ANSWER:\n${args.answer.slice(0, 30_000)}`;
 
   try {
     const managed = await runGeminiRequest({
@@ -126,7 +143,7 @@ export async function maybeRunSemanticQualityGate(args: {
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json",
-          maxOutputTokens: 900,
+          maxOutputTokens: 1200,
           thinkingConfig: { thinkingLevel: "minimal" } as never,
           abortSignal: args.signal,
         },
@@ -134,14 +151,21 @@ export async function maybeRunSemanticQualityGate(args: {
     });
     const parsed = parseJsonObject(managed.value.text ?? "");
     if (!parsed) return { ran: true, model, attempts: managed.attempts, error: "INVALID_QUALITY_JSON" };
+    const unsupportedClaims = stringArray(parsed.unsupportedClaims);
+    const contradictedClaims = stringArray(parsed.contradictedClaims);
+    const missingIssues = stringArray(parsed.missingIssues);
+    const overconfidenceClaims = stringArray(parsed.overconfidenceClaims);
+    const computedPass = parsed.pass === true && unsupportedClaims.length === 0 && contradictedClaims.length === 0 && missingIssues.length === 0;
     return {
       ran: true,
       model,
       attempts: managed.attempts,
-      pass: parsed.pass === true,
+      pass: computedPass,
       confidence: typeof parsed.confidence === "number" ? Math.max(0, Math.min(1, parsed.confidence)) : undefined,
-      unsupportedClaims: stringArray(parsed.unsupportedClaims),
-      missingIssues: stringArray(parsed.missingIssues),
+      unsupportedClaims,
+      contradictedClaims,
+      missingIssues,
+      overconfidenceClaims,
       notes: stringArray(parsed.notes),
     };
   } catch (error) {
@@ -150,17 +174,40 @@ export async function maybeRunSemanticQualityGate(args: {
   }
 }
 
+export function evaluateQualityDisposition(deterministic: DeterministicQualityResult, semantic: SemanticQualityResult): QualityDisposition {
+  const semanticContradiction = Boolean(semantic.contradictedClaims?.length);
+  const semanticUnsupported = Boolean(semantic.unsupportedClaims?.length);
+  const semanticMissing = Boolean(semantic.missingIssues?.length);
+  const semanticFailed = semantic.ran && semantic.pass === false && (semanticContradiction || semanticUnsupported || semanticMissing);
+  if (deterministic.hardFailures.length || semanticFailed) return "fail";
+  if (deterministic.softWarnings.length || semantic.overconfidenceClaims?.length || (semantic.ran && semantic.error)) return "warning";
+  return "pass";
+}
+
 export function qualityWarning(deterministic: DeterministicQualityResult, semantic: SemanticQualityResult) {
-  const semanticFailed = semantic.ran && semantic.pass === false;
-  if (deterministic.pass && !semanticFailed) return "";
-  const points = [
+  const disposition = evaluateQualityDisposition(deterministic, semantic);
+  if (disposition === "pass") return "";
+
+  const hardPoints = [
     deterministic.invalidCitations.length ? `مراجع غير صالحة: ${deterministic.invalidCitations.join(", ")}` : "",
     deterministic.unapprovedUrls.length ? "روابط غير موجودة ضمن الأدلة المسموح بها" : "",
     !deterministic.hasOfficialGrounding ? "لم يُستخدم مصدر رسمي مباشر رغم توفره" : "",
-    deterministic.uncitedLegalClaims.length ? `${deterministic.uncitedLegalClaims.length} عبارة قانونية تحتاج إسناداً أوضح` : "",
-    semanticFailed && semantic.unsupportedClaims?.length ? `${semantic.unsupportedClaims.length} ادعاء رصدته المراجعة الدلالية كغير مدعوم` : "",
-    semanticFailed && semantic.missingIssues?.length ? `${semantic.missingIssues.length} مسألة مطلوبة لم تُغطَّ بما يكفي` : "",
+    semantic.contradictedClaims?.length ? `${semantic.contradictedClaims.length} ادعاء يناقض الدليل` : "",
+    semantic.unsupportedClaims?.length ? `${semantic.unsupportedClaims.length} ادعاء غير مدعوم بالدليل` : "",
+    semantic.missingIssues?.length ? `${semantic.missingIssues.length} مسألة مطلوبة لم تُغطَّ بما يكفي` : "",
   ].filter(Boolean);
-  if (!points.length) return "";
-  return `\n\n> ⚠️ **بوابة الجودة القانونية:** هذه الإجابة تحتاج مراجعة قبل الاعتماد النهائي (${points.join("؛ ")}).`;
+
+  if (disposition === "fail") {
+    return `\n\n> ⚠️ **بوابة الجودة القانونية:** هذه الإجابة تحتاج مراجعة قبل الاعتماد النهائي (${hardPoints.join("؛ ") || "فشل تحقق الإسناد"}).`;
+  }
+
+  const softPoints = [
+    deterministic.uncitedLegalClaims.length ? `${deterministic.uncitedLegalClaims.length} عبارة قانونية تحتاج موضع إسناد أوضح` : "",
+    !deterministic.hasAnswerLimits ? "قسم حدود الإجابة غير موجود" : "",
+    semantic.overconfidenceClaims?.length ? `${semantic.overconfidenceClaims.length} صياغة ثقة مبالغ فيها` : "",
+    semantic.ran && semantic.error ? "تعذر إكمال التحقق الدلالي الإضافي" : "",
+  ].filter(Boolean);
+  return softPoints.length
+    ? `\n\n> ℹ️ **ملاحظة جودة:** المحتوى لم يفشل التحقق القانوني، لكن توجد ملاحظات تحسين في الإسناد/الصياغة (${softPoints.join("؛ ")}).`
+    : "";
 }

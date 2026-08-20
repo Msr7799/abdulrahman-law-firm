@@ -2,7 +2,7 @@ import "server-only";
 
 import { GoogleGenAI } from "@google/genai";
 import type { LawCase } from "@/types/admin";
-import { rankCases } from "@/lib/case-search";
+import { normalizeSearch, rankCases } from "@/lib/case-search";
 import { diagnoseGeminiError } from "@/lib/gemini-request-manager";
 
 export type HybridCaseMatch = {
@@ -18,11 +18,14 @@ export type CaseEmbeddingDebug = {
   model: string;
   dimensions: number;
   totalCases: number;
+  eligibleCases: number;
+  excludedDemoCases: number;
   candidates: number;
   cacheHits: number;
   cacheMisses: number;
   embeddingCalls: number;
   elapsedMs: number;
+  queryDomain: string;
   fallback?: string;
   top: Array<{
     caseId: string;
@@ -30,32 +33,44 @@ export type CaseEmbeddingDebug = {
     lexicalScore: number;
     semanticScore: number;
     combinedScore: number;
+    domain: string;
+    reason?: string;
+  }>;
+  rejected: Array<{
+    caseId: string;
+    caseRef: string;
+    lexicalScore: number;
+    semanticScore: number;
+    combinedScore: number;
+    domain: string;
+    reason: string;
   }>;
 };
 
-type CachedEmbedding = {
-  version: string;
-  vector: number[];
-};
-
-type EmbeddingCacheState = {
-  caseVectors: Map<string, CachedEmbedding>;
-  nextAllowedAt: number;
-};
-
-type GlobalWithCaseRag = typeof globalThis & {
-  __abdulrahmanCaseEmbeddingRagV13?: EmbeddingCacheState;
-};
+type CachedEmbedding = { version: string; vector: number[] };
+type EmbeddingCacheState = { caseVectors: Map<string, CachedEmbedding>; nextAllowedAt: number };
+type GlobalWithCaseRag = typeof globalThis & { __abdulrahmanCaseEmbeddingRagV17?: EmbeddingCacheState };
 
 function state() {
   const root = globalThis as GlobalWithCaseRag;
-  root.__abdulrahmanCaseEmbeddingRagV13 ??= { caseVectors: new Map(), nextAllowedAt: 0 };
-  return root.__abdulrahmanCaseEmbeddingRagV13;
+  root.__abdulrahmanCaseEmbeddingRagV17 ??= { caseVectors: new Map(), nextAllowedAt: 0 };
+  return root.__abdulrahmanCaseEmbeddingRagV17;
 }
 
 function envInt(name: string, fallback: number, min: number, max: number) {
   const value = Number(process.env[name] ?? fallback);
   return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.trunc(value))) : fallback;
+}
+
+function envFloat(name: string, fallback: number, min: number, max: number) {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+
+function envBool(name: string, fallback: boolean) {
+  const value = process.env[name];
+  if (value == null) return fallback;
+  return /^(1|true|yes|on)$/i.test(value.trim());
 }
 
 function sleep(ms: number, signal: AbortSignal) {
@@ -109,7 +124,6 @@ function caseDocument(lawCase: LawCase) {
 }
 
 function queryEmbeddingText(query: string) {
-  // Gemini Embedding 2 recommends task prefixes in the prompt for text retrieval.
   return `task: search result | query: ${query.slice(0, 6000)}`;
 }
 
@@ -133,13 +147,49 @@ function cosine(a: number[], b: number[]) {
 }
 
 function exactReferenceBoost(query: string, lawCase: LawCase) {
-  const compact = query.replace(/\s+/g, "");
+  const compact = normalizeSearch(query).replace(/\s+/g, "");
   const refs = [
     `${lawCase.caseNumber}/${lawCase.caseYear}`,
     `${lawCase.caseNumber}-${lawCase.caseYear}`,
-    String(lawCase.caseNumber),
-  ].filter(Boolean);
-  return refs.some((ref) => compact.includes(ref.replace(/\s+/g, ""))) ? 0.18 : 0;
+  ].map((ref) => normalizeSearch(ref).replace(/\s+/g, "")).filter(Boolean);
+  return refs.some((ref) => ref.length >= 4 && compact.includes(ref)) ? 0.22 : 0;
+}
+
+function exactReferenceMatch(query: string, lawCase: LawCase) {
+  return exactReferenceBoost(query, lawCase) > 0;
+}
+
+type LegalDomain = "constitutional" | "criminal" | "labor" | "family" | "execution" | "commercial" | "civil" | "property" | "general";
+
+function detectQueryDomain(text: string): LegalDomain {
+  const value = normalizeSearch(text);
+  if (/دستور|دستوري|المحكمه الدستوريه|سمو الدستور|constitutional|constitution/.test(value)) return "constitutional";
+  if (/جناي|جنائي|جنحه|جريمه|متهم|عقوبات|criminal|penal|prosecution/.test(value)) return "criminal";
+  if (/عمال|عامل|عمل|اجور|نهايه خدمه|labor|labour|employment/.test(value)) return "labor";
+  if (/شرعي|اسره|زواج|طلاق|حضانه|نفقه|family|sharia/.test(value)) return "family";
+  if (/تنفيذ|منفذ ضده|سند تنفيذي|execution|enforcement/.test(value)) return "execution";
+  if (/تجاري|شركه|توريد|تجاره|commercial|company|supply/.test(value)) return "commercial";
+  if (/عقار|ملكيه|ارض|تسجيل عقاري|property|real estate|land/.test(value)) return "property";
+  if (/مدني|عقد|تعويض|مطالبه|civil|contract|damages/.test(value)) return "civil";
+  return "general";
+}
+
+function detectCaseDomain(lawCase: LawCase): LegalDomain {
+  const value = normalizeSearch(`${lawCase.caseType} ${lawCase.court} ${lawCase.judgment} ${lawCase.notes}`);
+  return detectQueryDomain(value);
+}
+
+function domainCompatible(queryDomain: LegalDomain, caseDomain: LegalDomain) {
+  if (queryDomain === "general" || caseDomain === "general") return true;
+  if (queryDomain === caseDomain) return true;
+  // Civil/commercial/property can overlap in office matters. Constitutional should never be inferred from them.
+  if (queryDomain === "civil" && ["commercial", "property"].includes(caseDomain)) return true;
+  if (caseDomain === "civil" && ["commercial", "property"].includes(queryDomain)) return true;
+  return false;
+}
+
+function shouldIncludeDemo(query: string) {
+  return envBool("CASE_RAG_INCLUDE_DEMO", false) || /demo|تجريبي|بيانات التدريب|training/i.test(query);
 }
 
 async function embedWithRetry(args: {
@@ -191,19 +241,54 @@ export async function rankCasesHybrid(cases: LawCase[], query: string, signal: A
   const model = process.env.GEMINI_EMBEDDING_MODEL?.trim() || "gemini-embedding-2";
   const dimensions = envInt("GEMINI_EMBEDDING_DIMENSIONS", 768, 128, 3072);
   const maxCandidates = envInt("CASE_RAG_MAX_EMBED_CANDIDATES", 64, 6, 160);
+  const highSemantic = envFloat("CASE_RAG_HIGH_SEMANTIC_SCORE", 0.78, 0, 1);
+  const supportedSemantic = envFloat("CASE_RAG_SUPPORTED_SEMANTIC_SCORE", 0.70, 0, 1);
+  const minCombined = envFloat("CASE_RAG_MIN_COMBINED_SCORE", 60, 0, 125);
+  const minLexicalCovered = envInt("CASE_RAG_MIN_LEXICAL_TERMS", 2, 1, 12);
   const apiKey = process.env.GEMINI_API_KEY;
-  const lexicalAll = rankCases(cases, query, Math.max(limit, Math.min(cases.length, maxCandidates)));
+  const includeDemo = shouldIncludeDemo(query);
+  const eligibleCases = cases.filter((lawCase) => includeDemo || !lawCase.isDemo);
+  const excludedDemoCases = cases.length - eligibleCases.length;
+  const queryDomain = detectQueryDomain(query);
+  const emptyDebug = (fallback?: string): CaseEmbeddingDebug => ({
+    model,
+    dimensions,
+    totalCases: cases.length,
+    eligibleCases: eligibleCases.length,
+    excludedDemoCases,
+    candidates: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    embeddingCalls: 0,
+    elapsedMs: Date.now() - started,
+    queryDomain,
+    fallback,
+    top: [],
+    rejected: [],
+  });
+
+  if (!eligibleCases.length) {
+    return { ranked: [], debug: emptyDebug(excludedDemoCases ? "NO_NON_DEMO_CASES" : "NO_CASES") };
+  }
+
+  const lexicalAll = rankCases(eligibleCases, query, Math.max(limit, Math.min(eligibleCases.length, maxCandidates)));
   const lexicalById = new Map(lexicalAll.map((item) => [item.lawCase.id, item]));
 
-  if (!apiKey || !cases.length) {
-    const ranked: HybridCaseMatch[] = lexicalAll.slice(0, limit).map((item) => ({ ...item, lexicalScore: item.score, semanticScore: 0, retrievalMode: "lexical-fallback" }));
+  if (!apiKey) {
+    const ranked = lexicalAll
+      .filter((item) => item.covered >= minLexicalCovered || exactReferenceMatch(query, item.lawCase))
+      .slice(0, limit)
+      .map((item) => ({ ...item, lexicalScore: item.score, semanticScore: 0, retrievalMode: "lexical-fallback" as const }));
     return {
       ranked,
-      debug: { model, dimensions, totalCases: cases.length, candidates: 0, cacheHits: 0, cacheMisses: 0, embeddingCalls: 0, elapsedMs: Date.now() - started, fallback: !apiKey ? "GEMINI_API_KEY_MISSING" : "NO_CASES", top: ranked.map((item) => ({ caseId: item.lawCase.id, caseRef: `${item.lawCase.caseNumber}/${item.lawCase.caseYear}`, lexicalScore: item.lexicalScore, semanticScore: 0, combinedScore: item.score })) },
+      debug: {
+        ...emptyDebug("GEMINI_API_KEY_MISSING"),
+        top: ranked.map((item) => ({ caseId: item.lawCase.id, caseRef: `${item.lawCase.caseNumber}/${item.lawCase.caseYear}`, lexicalScore: item.lexicalScore, semanticScore: 0, combinedScore: item.score, domain: detectCaseDomain(item.lawCase) })),
+      },
     };
   }
 
-  const candidates = candidateCases(cases, query, maxCandidates);
+  const candidates = candidateCases(eligibleCases, query, maxCandidates);
   const cache = state().caseVectors;
   const missing = candidates.filter((lawCase) => {
     const cached = cache.get(lawCase.id);
@@ -212,8 +297,6 @@ export async function rankCasesHybrid(cases: LawCase[], query: string, signal: A
   const cacheHits = candidates.length - missing.length;
 
   try {
-    // One embedding API call produces the query vector plus every missing document vector.
-    // Cached case vectors avoid re-embedding unchanged office cases on warm Vercel instances.
     const contents: Array<{ parts: Array<{ text: string }> }> = [
       { parts: [{ text: queryEmbeddingText(query) }] },
       ...missing.map((lawCase) => ({ parts: [{ text: documentEmbeddingText(lawCase) }] })),
@@ -228,28 +311,52 @@ export async function rankCasesHybrid(cases: LawCase[], query: string, signal: A
     });
 
     const maxLexical = Math.max(1, ...lexicalAll.map((item) => item.score));
-    const rankedAll = candidates.map((lawCase) => {
+    const evaluated = candidates.map((lawCase) => {
       const lexical = lexicalById.get(lawCase.id);
       const lexicalNorm = Math.max(0, Math.min(1, (lexical?.score ?? 0) / maxLexical));
       const vector = cache.get(lawCase.id)?.vector ?? [];
       const semanticRaw = vector.length ? cosine(queryVector, vector) : 0;
       const semantic = Math.max(0, Math.min(1, semanticRaw));
-      const combined = Math.min(1.25, semantic * 0.74 + lexicalNorm * 0.26 + exactReferenceBoost(query, lawCase));
+      const exact = exactReferenceMatch(query, lawCase);
+      const caseDomain = detectCaseDomain(lawCase);
+      const compatible = domainCompatible(queryDomain, caseDomain);
+      const combined = Math.min(1.25, semantic * 0.78 + lexicalNorm * 0.22 + (exact ? 0.22 : 0));
+      const score = combined * 100;
+      const covered = lexical?.covered ?? 0;
+      let accepted = false;
+      let reason = "";
+
+      if (exact) {
+        accepted = true;
+        reason = "exact case reference";
+      } else if (!compatible) {
+        reason = `legal-domain mismatch (${queryDomain} vs ${caseDomain})`;
+      } else if (semantic >= highSemantic && score >= minCombined) {
+        accepted = true;
+        reason = `high semantic similarity >= ${highSemantic}`;
+      } else if (semantic >= supportedSemantic && score >= minCombined && covered >= minLexicalCovered) {
+        accepted = true;
+        reason = `semantic + ${covered} lexical anchors`;
+      } else {
+        reason = `below gate: semantic=${semanticRaw.toFixed(4)}, lexicalTerms=${covered}, combined=${score.toFixed(2)}`;
+      }
+
       return {
         lawCase,
-        score: combined * 100,
-        covered: lexical?.covered ?? 0,
+        score,
+        covered,
         lexicalScore: lexical?.score ?? 0,
         semanticScore: semanticRaw,
         retrievalMode: "hybrid" as const,
+        caseDomain,
+        accepted,
+        reason,
       };
     }).sort((a, b) => b.score - a.score || b.lawCase.updatedAt - a.lawCase.updatedAt);
 
-    const threshold = Number(process.env.CASE_RAG_MIN_COMBINED_SCORE ?? 50);
-    const minSemantic = Number(process.env.CASE_RAG_MIN_SEMANTIC_SCORE ?? 0.52);
-    const ranked = rankedAll
-      .filter((item) => item.covered > 0 || (item.semanticScore >= minSemantic && item.score >= threshold))
-      .slice(0, limit);
+    const accepted = evaluated.filter((item) => item.accepted).slice(0, limit);
+    const ranked: HybridCaseMatch[] = accepted.map(({ lawCase, score, covered, lexicalScore, semanticScore, retrievalMode }) => ({ lawCase, score, covered, lexicalScore, semanticScore, retrievalMode }));
+    const rejected = evaluated.filter((item) => !item.accepted).slice(0, 8);
 
     return {
       ranked,
@@ -257,30 +364,41 @@ export async function rankCasesHybrid(cases: LawCase[], query: string, signal: A
         model,
         dimensions,
         totalCases: cases.length,
+        eligibleCases: eligibleCases.length,
+        excludedDemoCases,
         candidates: candidates.length,
         cacheHits,
         cacheMisses: missing.length,
         embeddingCalls: 1,
         elapsedMs: Date.now() - started,
-        top: ranked.map((item) => ({ caseId: item.lawCase.id, caseRef: `${item.lawCase.caseNumber}/${item.lawCase.caseYear}`, lexicalScore: Number(item.lexicalScore.toFixed(2)), semanticScore: Number(item.semanticScore.toFixed(4)), combinedScore: Number(item.score.toFixed(2)) })),
+        queryDomain,
+        top: accepted.map((item) => ({ caseId: item.lawCase.id, caseRef: `${item.lawCase.caseNumber}/${item.lawCase.caseYear}`, lexicalScore: Number(item.lexicalScore.toFixed(2)), semanticScore: Number(item.semanticScore.toFixed(4)), combinedScore: Number(item.score.toFixed(2)), domain: item.caseDomain, reason: item.reason })),
+        rejected: rejected.map((item) => ({ caseId: item.lawCase.id, caseRef: `${item.lawCase.caseNumber}/${item.lawCase.caseYear}`, lexicalScore: Number(item.lexicalScore.toFixed(2)), semanticScore: Number(item.semanticScore.toFixed(4)), combinedScore: Number(item.score.toFixed(2)), domain: item.caseDomain, reason: item.reason })),
       },
     };
   } catch (error) {
     const diagnosed = diagnoseGeminiError(error);
-    const ranked: HybridCaseMatch[] = lexicalAll.slice(0, limit).map((item) => ({ ...item, lexicalScore: item.score, semanticScore: 0, retrievalMode: "lexical-fallback" }));
+    const ranked: HybridCaseMatch[] = lexicalAll
+      .filter((item) => item.covered >= minLexicalCovered || exactReferenceMatch(query, item.lawCase))
+      .slice(0, limit)
+      .map((item) => ({ ...item, lexicalScore: item.score, semanticScore: 0, retrievalMode: "lexical-fallback" as const }));
     return {
       ranked,
       debug: {
         model,
         dimensions,
         totalCases: cases.length,
+        eligibleCases: eligibleCases.length,
+        excludedDemoCases,
         candidates: candidates.length,
         cacheHits,
         cacheMisses: missing.length,
         embeddingCalls: 1,
         elapsedMs: Date.now() - started,
+        queryDomain,
         fallback: `${diagnosed.status ?? "ERR"} ${diagnosed.code ?? "EMBEDDING_ERROR"}: ${diagnosed.providerMessage}`.slice(0, 800),
-        top: ranked.map((item) => ({ caseId: item.lawCase.id, caseRef: `${item.lawCase.caseNumber}/${item.lawCase.caseYear}`, lexicalScore: Number(item.lexicalScore.toFixed(2)), semanticScore: 0, combinedScore: Number(item.score.toFixed(2)) })),
+        top: ranked.map((item) => ({ caseId: item.lawCase.id, caseRef: `${item.lawCase.caseNumber}/${item.lawCase.caseYear}`, lexicalScore: Number(item.lexicalScore.toFixed(2)), semanticScore: 0, combinedScore: Number(item.score.toFixed(2)), domain: detectCaseDomain(item.lawCase), reason: "lexical fallback" })),
+        rejected: [],
       },
     };
   }

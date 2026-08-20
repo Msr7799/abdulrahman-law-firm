@@ -11,11 +11,11 @@ import { getLegalNews, isLegalNewsQuery, legalNewsForAgent, periodFromQuery } fr
 import { bahrainLogoDirectorySummary, searchBahrainLogoDirectory } from "@/lib/bahrain-logo-directory";
 import type { LegalNewsItem, LegalNewsLogo } from "@/types/legal-news";
 import { compressPdfForAi, type PdfCompressionReport } from "@/lib/pdf-compressor";
-import { evidenceContext, extractOfficialUrls, fetchOfficialEvidence, researchPlanSummary, selectLegalSkillIds, tavilyLegalSearch, validateEvidenceCitations, type ResearchDebugEvent, type ResearchEvidence } from "@/lib/legal-research";
+import { evidenceContext, extractOfficialUrls, fetchOfficialEvidence, isOfficialBahrainUrl, researchPlanSummary, selectLegalSkillIds, tavilyLegalSearch, validateEvidenceCitations, type ResearchDebugEvent, type ResearchEvidence } from "@/lib/legal-research";
 import { diagnoseGeminiError, GeminiRequestError, runGeminiRequest, type GeminiAttemptTrace } from "@/lib/gemini-request-manager";
 import { selectGeminiModelPolicy, type GeminiModelPolicy } from "@/lib/gemini-model-policy";
 import { rankCasesHybrid, type HybridCaseMatch } from "@/lib/case-embedding-rag";
-import { maybeRunSemanticQualityGate, qualityWarning, runDeterministicQualityGate } from "@/lib/legal-quality-gate";
+import { evaluateQualityDisposition, maybeRunSemanticQualityGate, qualityWarning, runDeterministicQualityGate } from "@/lib/legal-quality-gate";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -363,10 +363,12 @@ async function prepareLogoAccess(query: string, extraText: string, newsItems: Le
   const summary = await bahrainLogoDirectorySummary();
   const logoIntent = /(?:شعار|لوقو|logo|logos)/i.test(query);
   const newsIntent = isLegalNewsQuery(query) || /(?:خبر|أخبار|اخبار|صحيفة|جريدة|وكالة أنباء|news|press|newspaper)/i.test(query);
-  const queryMatches = await searchBahrainLogoDirectory(`${query}\n${extraText}`, logoIntent ? 16 : 8);
+  // Do not inject decorative/loosely matched images into ordinary legal analysis.
+  // Logos are surfaced only when the user asks for them or the task is actually about news.
+  const queryMatches = logoIntent ? await searchBahrainLogoDirectory(`${query}\n${extraText}`, 16) : [];
   const newsLogos = newsIntent ? collectNewsLogos(newsItems).map((logo) => ({ name: logo.name, url: logo.url, category: "مرتبط بأخبار الموقع", score: 210 })) : [];
-  const maxLogos = logoIntent ? 16 : 10;
-  const merged = Array.from(new Map([...queryMatches, ...newsLogos].map((logo) => [logo.url, logo])).values()).slice(0, maxLogos);
+  const maxLogos = logoIntent ? 16 : newsIntent ? 10 : 0;
+  const merged = maxLogos ? Array.from(new Map([...queryMatches, ...newsLogos].map((logo) => [logo.url, logo])).values()).slice(0, maxLogos) : [];
 
   const imageCandidates: Array<AgentImage | null> = await Promise.all(
     merged.map(async (logo): Promise<AgentImage | null> => {
@@ -425,6 +427,9 @@ Rules:
 24. For constitutional, statutory, procedural, or judgment analysis, extract and answer the exact requested issues. When an official judgment or legislation text is already supplied in [O#], do not replace it with hypothetical language such as “if the law says”; state what the official evidence actually establishes and flag only what remains unavailable.
 25. Never use an irrelevant official source merely because it is governmental. A land-registration result does not support constitutional law, a press article does not prove the text of a statute, and a portal homepage does not prove a specific article.
 26. Use the ACTIVE LEGAL SKILLS below as operating checklists. They are not sources and must never be cited as authority.
+27. Never describe an entire legal analysis as "100%", "قطعي", or "قطعية". If an official judgment is supplied, you may say the operative disposition is verified from the official judgment, while keeping analytical confidence separate and appropriately qualified.
+28. If the user or attached benchmark explicitly asks for strengths/weaknesses, counterarguments, missing information, or points for each side, include those sections explicitly. Do not silently omit rubric requirements found in the attachment.
+29. Do not expose an office case [C#] merely because vector similarity is moderate. Use case context only when it is materially related to the legal issue; unrelated client/demo data must remain out of the answer.
 
 ACTIVE LEGAL SKILLS:
 ${agentSkillsForPrompt(activeSkillIds)}
@@ -475,6 +480,21 @@ function attachmentResearchSeed(message: string, files: File[]) {
     .filter(Boolean)
     .join(" ");
   return names ? `${names} Bahrain law` : message.trim();
+}
+
+function asksForBroaderExternalResearch(message: string) {
+  return /(?:ابحث|بحث|مصادر\s+(?:اضافيه|إضافية|اخرى|أخرى)|مراجع\s+(?:اضافيه|إضافية|اخرى|أخرى)|سوابق\s+(?:مشابهه|مشابهة|اخرى|أخرى)|قارن|مقارنه|مقارنة|اخبار|أخبار|news|additional\s+sources|more\s+sources|compare|precedents?)/i.test(message);
+}
+
+function officialEvidenceIsAuthoritativeAndSubstantial(items: ResearchEvidence[]) {
+  return items.some((item) => {
+    const text = `${item.title} ${item.content || item.snippet || ""}`;
+    const chars = (item.content || item.snippet || "").length;
+    return item.sourceType === "official"
+      && (item.score ?? 0) >= 95
+      && chars >= 7000
+      && /(?:حكم\s+المحكم|المحكمه\s+الدستوريه|المحكمة\s+الدستورية|تشريع|قانون|مرسوم|constitution|judgment|ruling)/i.test(text);
+  });
 }
 
 function binaryAttachmentMimeTypes(parts: Part[]) {
@@ -655,24 +675,10 @@ export async function POST(request: Request) {
 
   const debugEvents: ResearchDebugEvent[] = [];
 
-  started = Date.now();
-  const cases = await getCases(idToken);
+  // Start loading office cases early, but do not rank them until we know what the attachment is about.
+  // This avoids embedding a useless command such as "جاوب" and then surfacing unrelated client files.
+  const casesPromise = getCases(idToken);
   const initialResearchSeed = attachmentResearchSeed(parsed.message, parsed.files);
-  const hybridRag = await rankCasesHybrid(cases, initialResearchSeed, request.signal, 6);
-  const ranked = hybridRag.ranked;
-  nodes.push({ id: "rag", label: "Case RAG · Gemini Embeddings", status: cases.length ? "done" : "skipped", ms: Date.now() - started, detail: `${ranked.length}/${cases.length} · ${hybridRag.debug.model}${hybridRag.debug.fallback ? " · lexical fallback" : ""}` });
-  debugEvents.push({
-    id: "case-embedding-rag",
-    kind: "tool",
-    title: "case_embedding_rag",
-    status: hybridRag.debug.fallback ? "skipped" : "done",
-    ms: hybridRag.debug.elapsedMs,
-    summary: hybridRag.debug.fallback
-      ? "تعذر الترتيب الدلالي بالـ embeddings، فاستمر الوكيل تلقائياً بالبحث النصي حتى لا يتوقف الطلب."
-      : `تم ترتيب القضايا هجينيًا: تشابه دلالي عبر ${hybridRag.debug.model} + مطابقة نصية، باستدعاء Embedding واحد فقط.`,
-    input: { query: initialResearchSeed, originalQuestion: parsed.message, totalCases: cases.length, candidates: hybridRag.debug.candidates, dimensions: hybridRag.debug.dimensions },
-    output: hybridRag.debug,
-  });
 
   // Always give the agent the same Bahrain-news knowledge that powers the site.
   // The first list is strict "today" in Bahrain time; the second mirrors the homepage carousel exactly.
@@ -686,7 +692,8 @@ export async function POST(request: Request) {
     nodes.push({ id: "site-news", label: "Site news · Bahrain today", status: "error", ms: Date.now() - started });
   }
 
-  // Node 1: recover exact official URLs without an LLM whenever possible.
+  // Recover exact official URLs first. For a vague attachment command this is enough to fetch the
+  // authoritative judgment without spending a Flash-Lite routing call when the PDF already embeds it.
   started = Date.now();
   const rawOfficialUrls = await extractOfficialUrls(parsed.message, parsed.files);
   nodes.push({ id: "official-url", label: "Official URL extraction", status: rawOfficialUrls.length ? "done" : "skipped", ms: Date.now() - started, detail: `${rawOfficialUrls.length}` });
@@ -697,11 +704,9 @@ export async function POST(request: Request) {
     webSearch: parsed.webSearch,
   });
 
-  // If the PDF text is compressed and the raw URL is not recoverable, use one tiny Flash-Lite
-  // routing call (<=8MB attachments only). It does not solve the case; it only extracts anchors.
   const forceAttachmentPreflight = parsed.files.length > 0 && isGenericAttachmentCommand(parsed.message);
   const preflight = rawOfficialUrls.length
-    ? { plan: null, event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "skipped", ms: 0, summary: "تم العثور على رابط رسمي حتمي؛ لا حاجة لاستهلاك طلب Flash-Lite إضافي.", input: { rawOfficialUrls }, output: { skipped: true } } satisfies ResearchDebugEvent }
+    ? { plan: null, event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "skipped", ms: 0, summary: "تم العثور على رابط رسمي مباشر داخل المرفق؛ سيُقرأ المصدر الرسمي أولاً ويُستخدم هو نفسه لإثراء RAG، لذلك لا حاجة لطلب Flash-Lite إضافي.", input: { rawOfficialUrls }, output: { skipped: true, reason: "direct official source available" } } satisfies ResearchDebugEvent }
     : !initialModelPolicy.allowPreflight && !forceAttachmentPreflight
       ? { plan: null, event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "skipped", ms: 0, summary: "سياسة النماذج صنفت الطلب كمهمة لا تحتاج Subagent تمهيدي، فتم توفير طلب Gemini من الحصة المجانية.", input: { workload: initialModelPolicy.workload }, output: { skipped: true } } satisfies ResearchDebugEvent }
       : await preflightResearch(parsed.message, parsed.files, request.signal, initialModelPolicy.preflightModels);
@@ -710,15 +715,52 @@ export async function POST(request: Request) {
   }
   debugEvents.push(preflight.event);
   nodes.push({ id: "research-router", label: "Legal research router", status: preflight.event.status, ms: preflight.event.ms ?? 0, detail: preflight.plan?.searchQuery ? "query+anchors" : forceAttachmentPreflight ? "attachment routing" : undefined });
+
   const directOfficialUrls = [...new Set([...rawOfficialUrls, ...(preflight.plan?.officialUrls ?? [])])].slice(0, 6);
   const routedResearchText = `${preflight.plan?.searchQuery || initialResearchSeed} ${preflight.plan?.legalTopics.join(" ") || ""} ${preflight.plan?.articleNumbers.join(" ") || ""} ${preflight.plan?.caseReferences.join(" ") || ""}`.trim();
 
-  // Node 2: fetch exact Bahrain official sources before any broad search.
+  // Fetch exact Bahrain official sources before RAG/Tavily. The fetched judgment becomes both legal
+  // evidence and a high-quality retrieval seed for office cases.
   const officialResult = await fetchOfficialEvidence(directOfficialUrls, `${routedResearchText}\n${parsed.files.map((file) => file.name).join(" ")}`, request.signal);
   debugEvents.push(officialResult.event);
   nodes.push({ id: "official-fetch", label: "Official Bahrain evidence", status: officialResult.evidence.length ? "done" : directOfficialUrls.length ? "error" : "skipped", ms: officialResult.event.ms ?? 0, detail: `${officialResult.evidence.length}` });
 
   const officialHint = officialResult.evidence.map((item) => `${item.title} ${item.snippet ?? ""}`).join(" ").slice(0, 2400);
+  const officialRagSeed = officialResult.evidence
+    .map((item) => `${item.title} ${(item.content || item.snippet || "").slice(0, 1800)}`)
+    .join(" ")
+    .slice(0, 4200);
+  const ragQuery = [
+    preflight.plan?.searchQuery,
+    preflight.plan?.legalTopics.join(" "),
+    preflight.plan?.articleNumbers.join(" "),
+    preflight.plan?.caseReferences.join(" "),
+    officialRagSeed,
+    initialResearchSeed,
+  ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim().slice(0, 6000);
+
+  started = Date.now();
+  const cases = await casesPromise;
+  const hybridRag = await rankCasesHybrid(cases, ragQuery || initialResearchSeed, request.signal, 6);
+  const ranked = hybridRag.ranked;
+  const ragStatus: PipelineNode["status"] = ranked.length ? "done" : "skipped";
+  const excludedDemoDetail = hybridRag.debug.excludedDemoCases ? ` · ${hybridRag.debug.excludedDemoCases} demo excluded` : "";
+  nodes.push({ id: "rag", label: "Case RAG · Gemini Embeddings", status: ragStatus, ms: Date.now() - started, detail: `${ranked.length}/${cases.length} · ${hybridRag.debug.model}${excludedDemoDetail}${hybridRag.debug.fallback ? ` · ${hybridRag.debug.fallback}` : ""}` });
+  debugEvents.push({
+    id: "case-embedding-rag",
+    kind: "tool",
+    title: "case_embedding_rag",
+    status: ragStatus,
+    ms: hybridRag.debug.elapsedMs,
+    summary: ranked.length
+      ? `تم تشغيل RAG بعد فهم موضوع المرفق/المصدر الرسمي، وقُبلت فقط القضايا التي تجاوزت بوابة التشابه الدلالي + التطابق القانوني.`
+      : hybridRag.debug.excludedDemoCases && hybridRag.debug.eligibleCases === 0
+        ? `لم تُدخل أي قضية في السياق؛ تم استبعاد ${hybridRag.debug.excludedDemoCases} قضية تجريبية من RAG الحقيقي افتراضياً.`
+        : "لم تتجاوز أي قضية مكتب بوابة الصلة القانونية الصارمة، لذلك لن تُعرض بيانات قضايا غير مرتبطة للمستخدم.",
+    input: { query: ragQuery || initialResearchSeed, originalQuestion: parsed.message, totalCases: cases.length, candidates: hybridRag.debug.candidates, dimensions: hybridRag.debug.dimensions },
+    output: hybridRag.debug,
+  });
+
   const activeSkillIds = [...new Set([...selectLegalSkillIds(`${parsed.message}\n${officialHint}\n${routedResearchText}`, parsed.files.length > 0), ...(preflight.plan?.suggestedSkillIds ?? [])])];
   for (const skill of agentSkillsByIds(activeSkillIds)) {
     debugEvents.push({
@@ -753,10 +795,15 @@ export async function POST(request: Request) {
 
   const legalResearchIntent = parsed.files.length > 0 || /قانون|تشريع|مادة|محكمة|قضية|حكم|دستور|طعن|استئناف|تمييز|نيابة|حقوق|legal|law|court|case|judgment|constitution|appeal/i.test(parsed.message);
   const visualSearch = /صور|صورة|مرئي|خريطة|اعرض.*صور|image|images|photo|photos|visual|map/i.test(parsed.message);
-  const shouldTavily = parsed.webSearch || (legalResearchIntent && officialResult.evidence.length === 0);
+  const broaderResearchRequested = asksForBroaderExternalResearch(parsed.message);
+  const authoritativeOfficialReady = officialEvidenceIsAuthoritativeAndSubstantial(officialResult.evidence);
+  // A full exact official judgment already answers the benchmark's authority question better than a
+  // second general web search. Tavily is still used when evidence is missing/short or the user asks
+  // for broader sources, comparisons, precedents or news.
+  const shouldTavily = broaderResearchRequested || (!authoritativeOfficialReady && (parsed.webSearch || (legalResearchIntent && officialResult.evidence.length === 0)));
   const tavilyResult = shouldTavily
-    ? await tavilyLegalSearch({ query: preflight.plan?.searchQuery || initialResearchSeed, contextHint: officialHint || routedResearchText || directOfficialUrls.join(" "), signal: request.signal, visual: visualSearch })
-    : { evidence: [] as ResearchEvidence[], images: [] as AgentImage[], event: { id: "tavily", kind: "tool", title: "tavily_search", status: "skipped", ms: 0, summary: "تم تجاوز Tavily لأن المصدر الرسمي المباشر متاح والبحث الخارجي غير مطلوب.", input: { webSearch: parsed.webSearch, officialEvidence: officialResult.evidence.length }, output: { accepted: 0 } } satisfies ResearchDebugEvent };
+    ? await tavilyLegalSearch({ query: preflight.plan?.searchQuery || routedResearchText || initialResearchSeed, contextHint: officialHint || directOfficialUrls.join(" "), signal: request.signal, visual: visualSearch })
+    : { evidence: [] as ResearchEvidence[], images: [] as AgentImage[], event: { id: "tavily", kind: "tool", title: "tavily_search", status: "skipped", ms: 0, summary: authoritativeOfficialReady ? "تم تجاوز Tavily لأن الحكم/التشريع الرسمي المباشر الكامل متاح ويغطي المسألة، ولا يوجد طلب صريح لمصادر إضافية." : "تم تجاوز Tavily لأن المصدر الرسمي المباشر متاح والبحث الخارجي غير مطلوب.", input: { webSearch: parsed.webSearch, officialEvidence: officialResult.evidence.length, authoritativeOfficialReady, broaderResearchRequested }, output: { accepted: 0 } } satisfies ResearchDebugEvent };
   debugEvents.push(tavilyResult.event);
   nodes.push({ id: "web", label: "Tavily · relevance gate", status: tavilyResult.event.status, ms: tavilyResult.event.ms ?? 0, detail: `${tavilyResult.evidence.length}` });
 
@@ -764,13 +811,19 @@ export async function POST(request: Request) {
   // server reads the actual official page so Gemini receives the source text, not just a snippet.
   let officialEvidence = officialResult.evidence;
   if (tavilyResult.evidence.length) {
-    const discoveredUrls = tavilyResult.evidence.map((item) => item.url).filter((url) => !officialEvidence.some((item) => item.url === url));
+    const discoveredUrls = tavilyResult.evidence
+      .map((item) => item.url)
+      .filter((url) => isOfficialBahrainUrl(url))
+      .filter((url) => !officialEvidence.some((item) => item.url === url));
     if (discoveredUrls.length) {
       const followup = await fetchOfficialEvidence(discoveredUrls, routedResearchText || parsed.message, request.signal);
       const merged = Array.from(new Map([...officialEvidence, ...followup.evidence].map((item) => [item.url, item])).values()).slice(0, 6);
       officialEvidence = merged.map((item, index) => ({ ...item, citationId: `O${index + 1}` }));
-      debugEvents.push({ ...followup.event, id: "official-followup", title: "official_source_followup", summary: followup.evidence.length ? `تم فتح ${followup.evidence.length} نتيجة رسمية اكتشفها Tavily وقراءة نصها مباشرة.` : "لم يتمكن الخادم من فتح نتائج Tavily الرسمية مباشرة؛ ستبقى snippets فقط." });
+      debugEvents.push({ ...followup.event, id: "official-followup", title: "official_source_followup", summary: followup.evidence.length ? `تم فتح ${followup.evidence.length} نتيجة رسمية اكتشفها Tavily وقراءة نصها مباشرة.` : "تعذر فتح نتيجة رسمية اكتشفها Tavily؛ ستبقى نتيجة Tavily الثانوية فقط." });
       nodes.push({ id: "official-followup", label: "Official source follow-up", status: followup.evidence.length ? "done" : "skipped", ms: followup.event.ms ?? 0, detail: `${followup.evidence.length}` });
+    } else {
+      debugEvents.push({ id: "official-followup", kind: "tool", title: "official_source_followup", status: "skipped", ms: 0, summary: "نتائج Tavily المقبولة هنا ليست روابط ضمن قائمة النطاقات الرسمية المباشرة، لذلك لم يحاول الخادم إعادة تصنيفها كمصدر [O#]. ستبقى كمصادر ثانوية [W#] فقط.", input: { urls: tavilyResult.evidence.map((item) => item.url) }, output: { officialUrls: [] } });
+      nodes.push({ id: "official-followup", label: "Official source follow-up", status: "skipped", ms: 0, detail: "0" });
     }
   }
   const officialUrlsSet = new Set(officialEvidence.map((item) => item.url));
@@ -988,26 +1041,29 @@ ${logoAccess.context}`;
       policy: modelPolicy,
       signal: request.signal,
     });
-    const qualityFailed = !deterministicQuality.pass || (semanticQuality.ran && semanticQuality.pass === false);
-    const qualityStatus = qualityFailed ? "error" : "done";
-    nodes.push({ id: "quality", label: "Legal quality gate", status: qualityStatus, ms: Date.now() - qualityStarted, detail: `${deterministicQuality.score}/100${semanticQuality.ran ? ` · ${semanticQuality.model ?? "semantic verifier"}` : " · deterministic"}` });
+    const qualityDisposition = evaluateQualityDisposition(deterministicQuality, semanticQuality);
+    const qualityStatus: PipelineNode["status"] = qualityDisposition === "fail" ? "error" : "done";
+    const qualityLabel = qualityDisposition === "pass" ? "PASS" : qualityDisposition === "warning" ? "PASS WITH NOTES" : "FAIL";
+    nodes.push({ id: "quality", label: "Legal quality gate", status: qualityStatus, ms: Date.now() - qualityStarted, detail: `${qualityLabel} · ${deterministicQuality.score}/100${semanticQuality.ran ? ` · ${semanticQuality.model ?? "semantic verifier"}` : " · deterministic"}` });
     debugEvents.push({
       id: "legal-quality-gate",
       kind: "validation",
       title: "legal_quality_gate",
       status: qualityStatus,
       ms: Date.now() - qualityStarted,
-      summary: qualityFailed
-        ? "بوابة الجودة رصدت نقاطاً تحتاج مراجعة قبل الاعتماد. لم يتم إسقاط الطلب، وتظهر تفاصيل الفشل داخل هذا الـFold."
-        : "اجتازت الإجابة بوابة الإسناد والمصادر قبل إرجاعها للمستخدم.",
+      summary: qualityDisposition === "fail"
+        ? "بوابة الجودة رصدت فشلاً جوهرياً في الإسناد أو تعارضاً/نقصاً قانونياً يحتاج مراجعة قبل الاعتماد."
+        : qualityDisposition === "warning"
+          ? "اجتازت الإجابة التحقق القانوني، مع ملاحظات تحسين غير جوهرية في موضع الإسناد أو صياغة الثقة."
+          : "اجتازت الإجابة بوابة الإسناد والمصادر قبل إرجاعها للمستخدم.",
       input: { workload: modelPolicy.workload, evidenceCount: allResearchEvidence.length, semanticVerifierRunsOnlyWhenNeeded: true },
-      output: { deterministic: deterministicQuality, semantic: semanticQuality },
+      output: { disposition: qualityDisposition, deterministic: deterministicQuality, semantic: semanticQuality },
     });
 
     const finalAnswer = `${result.text}${qualityWarning(deterministicQuality, semanticQuality)}`;
     const researchSources: AgentSource[] = allResearchEvidence.map(({ citationId, sourceType, title, url, snippet, score }) => ({ citationId, sourceType, title, url, snippet, score }));
     const newsSources = curatedNewsSources.length ? curatedNewsSources : isLegalNewsQuery(parsed.message) ? legalNewsForAgent([...todayNews, ...homepageNews]).sources.map((source, index) => ({ ...source, citationId: `N${index + 1}`, sourceType: "news" as const })) : [];
-    return NextResponse.json({ ok: true, answer: finalAnswer, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, quality: { deterministic: deterministicQuality, semantic: semanticQuality }, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated, workload: modelPolicy.workload, modelChain: modelPolicy.models, thinkingLevel: modelPolicy.thinkingLevel, toolPolicy: result.toolPolicy }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
+    return NextResponse.json({ ok: true, answer: finalAnswer, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, quality: { disposition: qualityDisposition, deterministic: deterministicQuality, semantic: semanticQuality }, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated, workload: modelPolicy.workload, modelChain: modelPolicy.models, thinkingLevel: modelPolicy.thinkingLevel, toolPolicy: result.toolPolicy }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : "AI_ERROR";
     const diagnosed = rawMessage === "GEMINI_API_KEY_MISSING"

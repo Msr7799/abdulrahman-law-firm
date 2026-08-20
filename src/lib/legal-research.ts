@@ -28,14 +28,19 @@ const AR_STOP = new Set([
 const EN_STOP = new Set(["the", "a", "an", "of", "in", "on", "to", "for", "and", "or", "with", "this", "that", "from", "case", "file", "bahrain", "bahraini", "analyze", "analyse"]);
 
 function stripTrailingPunctuation(value: string) {
-  return value.replace(/[)>\]}.,;:'\"،؛؟]+$/g, "");
+  // Markdown code ticks and sentence punctuation are formatting, never part of a source URL.
+  return value.replace(/[`)\]>\]}.,;:'"،؛؟]+$/g, "");
 }
 
 function canonicalUrl(value: string) {
   try {
-    const url = new URL(value.replace(/\\:/g, ":").replace(/&amp;/gi, "&"));
+    const cleaned = stripTrailingPunctuation(value.trim().replace(/^[`(<\[{]+/g, ""));
+    const url = new URL(cleaned.replace(/\\:/g, ":").replace(/&amp;/gi, "&"));
     url.hash = "";
     if (url.protocol === "http:") url.protocol = "https:";
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    if ((url.protocol === "https:" && url.port === "443") || (url.protocol === "http:" && url.port === "80")) url.port = "";
+    if (url.pathname !== "/") url.pathname = url.pathname.replace(/\/+$/, "");
     return url.toString();
   } catch {
     return "";
@@ -53,7 +58,7 @@ export function isOfficialBahrainUrl(value: string) {
 
 function urlsFromRawText(raw: string) {
   const decoded = raw.replace(/\\\(([^)]*)\\\)/g, "$1").replace(/\\:/g, ":").replace(/&amp;/gi, "&");
-  const matches = decoded.match(/https?:\/\/[^\s<>"'{}\[\]]+/gi) ?? [];
+  const matches = decoded.match(/https?:\/\/[^\s<>"'`{}\[\]]+/gi) ?? [];
   return matches.map((item) => canonicalUrl(stripTrailingPunctuation(item))).filter(Boolean);
 }
 
@@ -381,9 +386,11 @@ export function validateEvidenceCitations(answer: string, evidence: ResearchEvid
   const uniqueFound = [...new Set(found)];
   const invalid = uniqueFound.filter((id) => !valid.has(id));
   const validFound = uniqueFound.filter((id) => valid.has(id));
-  const rawUrls = [...answer.matchAll(/https?:\/\/[^\s)\]]+/g)].map((match) => stripTrailingPunctuation(match[0]));
-  const allowedUrls = new Set(evidence.map((item) => canonicalUrl(item.url)));
-  const unapprovedUrls = [...new Set(rawUrls.filter((url) => !allowedUrls.has(canonicalUrl(url))))];
+  const rawUrls = [...answer.matchAll(/https?:\/\/[^\s<>"'`{}\[\]]+/g)]
+    .map((match) => canonicalUrl(match[0]))
+    .filter(Boolean);
+  const allowedUrls = new Set(evidence.map((item) => canonicalUrl(item.url)).filter(Boolean));
+  const unapprovedUrls = [...new Set(rawUrls.filter((url) => !allowedUrls.has(url)))];
   return {
     validFound,
     invalid,
