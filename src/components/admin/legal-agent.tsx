@@ -500,8 +500,63 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
         form.set("pastHistory", pastHistory);
       }
       const response = await fetch("/api/admin/agent", { method: "POST", headers: { authorization: `Bearer ${token}` }, body: form, signal: controller.signal });
-      const body = await response.json();
-      if (!response.ok || !body.ok) throw new Error(body.message || "AI_ERROR");
+      const responseText = await response.text();
+      let body: any;
+      try { body = responseText ? JSON.parse(responseText) : {}; }
+      catch {
+        body = {
+          ok: false,
+          message: ar ? `فشل طلب الوكيل عند طبقة الخادم (${response.status}).` : `The agent request failed at the server layer (${response.status}).`,
+          error: {
+            httpStatus: response.status,
+            code: response.headers.get("x-vercel-error") || response.statusText || "NON_JSON_RESPONSE",
+            providerMessage: responseText.slice(0, 900),
+          },
+        };
+      }
+      if (!response.ok || !body.ok) {
+        const providerStatus = body.error?.httpStatus ? `HTTP ${body.error.httpStatus}` : `HTTP ${response.status}`;
+        const providerCode = body.error?.code ? ` · ${body.error.code}` : "";
+        const providerDetail = body.error?.providerMessage ? `
+
+**تفاصيل المزود:** ${String(body.error.providerMessage).slice(0, 900)}` : "";
+        const attempts = Array.isArray(body.error?.attempts) ? body.error.attempts.length : 0;
+        const retryNote = body.retryAfter ? `
+
+**إعادة المحاولة:** بعد نحو ${body.retryAfter} ثانية.` : "";
+        const failureContent = ar
+          ? `# تعذر إكمال طلب الوكيل
+
+> ${body.message || "تعذر إنشاء الإجابة."}
+
+**التشخيص:** ${providerStatus}${providerCode}${attempts ? ` · ${attempts} محاولات تلقائية` : ""}.${retryNote}${providerDetail}
+
+افتح **تتبّع الوكيل** أدناه لرؤية عقدة الفشل ومحاولات التباعد والتراجع بدون إخفاء السبب.`
+          : `# Agent request could not complete
+
+> ${body.message || "The answer could not be generated."}
+
+**Diagnosis:** ${providerStatus}${providerCode}${attempts ? ` · ${attempts} automatic attempts` : ""}.${retryNote}${providerDetail}
+
+Open the **Agent trace** below to inspect the failed node and retry timing.`;
+        const failedAssistant: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: failureContent,
+          model: body.model || "Gemini",
+          nodes: body.nodes,
+          debugEvents: body.debugEvents,
+        };
+        const failedMessages = [...withUserMessage, failedAssistant];
+        setMessages(failedMessages);
+        if (body.retryAfter) {
+          const retryMs = Number(body.retryAfter) * 1000;
+          if (Number.isFinite(retryMs) && retryMs > 0) setCooldownUntil(Date.now() + retryMs);
+        }
+        setError(body.message || (ar ? "تعذر تشغيل الوكيل." : "Unable to run the agent."));
+        void saveConversation(nextConversationId, failedMessages, question, Date.now());
+        return;
+      }
       const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: "assistant", content: body.answer, model: body.model, nodes: body.nodes, debugEvents: body.debugEvents, code: body.code, codeResult: body.codeResult, sources: body.sources, images: body.images, caseMatches: body.caseMatches, generation: body.generation };
       const completedMessages = [...withUserMessage, assistantMessage];
       setMessages(completedMessages);

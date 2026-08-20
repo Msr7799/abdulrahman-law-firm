@@ -13,9 +13,10 @@ import { bahrainLogoDirectorySummary, searchBahrainLogoDirectory } from "@/lib/b
 import type { LegalNewsItem, LegalNewsLogo } from "@/types/legal-news";
 import { compressPdfForAi, type PdfCompressionReport } from "@/lib/pdf-compressor";
 import { evidenceContext, extractOfficialUrls, fetchOfficialEvidence, researchPlanSummary, selectLegalSkillIds, tavilyLegalSearch, validateEvidenceCitations, type ResearchDebugEvent, type ResearchEvidence } from "@/lib/legal-research";
+import { diagnoseGeminiError, GeminiRequestError, runGeminiRequest, type GeminiAttemptTrace } from "@/lib/gemini-request-manager";
 
 export const runtime = "nodejs";
-export const maxDuration = 180;
+export const maxDuration = 300;
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -202,18 +203,26 @@ async function preflightResearch(message: string, files: File[], signal: AbortSi
         parts.push({ inlineData: { data: Buffer.from(await file.arrayBuffer()).toString("base64"), mimeType } });
       }
     }
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_PREFLIGHT_MODEL || "gemini-2.5-flash-lite",
-      contents: [{ role: "user", parts }],
-      config: {
-        temperature: 0,
-        topP: 0.2,
-        maxOutputTokens: 700,
-        responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 0 } as never,
-        abortSignal: signal,
-      },
+    const preflightModel = process.env.GEMINI_PREFLIGHT_MODEL || "gemini-2.5-flash-lite";
+    const routed = await runGeminiRequest({
+      model: preflightModel,
+      operation: "legal_research_router",
+      signal,
+      maxAttempts: envInt("GEMINI_PREFLIGHT_MAX_ATTEMPTS", 3, 1, 4),
+      call: () => ai.models.generateContent({
+        model: preflightModel,
+        contents: [{ role: "user", parts }],
+        config: {
+          temperature: 0,
+          topP: 0.2,
+          maxOutputTokens: 700,
+          responseMimeType: "application/json",
+          thinkingConfig: { thinkingBudget: 0 } as never,
+          abortSignal: signal,
+        },
+      }),
     });
+    const response = routed.value;
     const raw = response.text ?? "";
     const parsed = parseJsonObject(raw);
     if (!parsed) throw new Error("Invalid preflight JSON");
@@ -238,13 +247,24 @@ async function preflightResearch(message: string, files: File[], signal: AbortSi
         ms: Date.now() - started,
         summary: "استخدم Flash-Lite كعقدة توجيه قصيرة لاستخراج الرابط الرسمي ومفاتيح البحث من المرفق، بدون حل القضية وبدون تشغيل التفكير.",
         input: inputSummary,
-        output: plan,
+        output: { ...plan, requestAttempts: routed.attempts },
       },
     };
   } catch (error) {
+    const diagnosed = error instanceof GeminiRequestError ? error.info : diagnoseGeminiError(error);
+    const attempts = error instanceof GeminiRequestError ? error.attempts : [];
     return {
       plan: null,
-      event: { id: "research-router", kind: "tool", title: "legal_research_router", status: "error", ms: Date.now() - started, summary: "فشلت عقدة التوجيه؛ سيستمر الوكيل بالبحث الحتمي دون طلب Gemini إضافي.", input: inputSummary, output: { error: error instanceof Error ? error.message : "unknown" } },
+      event: {
+        id: "research-router",
+        kind: "tool",
+        title: "legal_research_router",
+        status: "error",
+        ms: Date.now() - started,
+        summary: `${diagnosed.userMessage} عقدة التوجيه اختيارية، لذلك سيستمر الوكيل بالبحث الحتمي ولن يسقط الطلب بسببها.`,
+        input: inputSummary,
+        output: { providerError: diagnosed, requestAttempts: attempts },
+      },
     };
   }
 }
@@ -381,7 +401,7 @@ ${roadmapKnowledgeForAgent()}`;
 }
 
 function modelList() {
-  return (process.env.GEMINI_MODELS ?? "gemini-2.5-flash,gemini-2.5-flash-lite").split(",").map((model) => model.trim()).filter((model) => model && !/pro/i.test(model)).slice(0, 2);
+  return (process.env.GEMINI_MODELS ?? "gemini-2.5-flash").split(",").map((model) => model.trim()).filter((model) => model && !/pro/i.test(model)).slice(0, 2);
 }
 
 function envInt(name: string, fallback: number, min: number, max: number) {
@@ -411,6 +431,7 @@ async function generate(prompt: string, files: Part[], signal: AbortSignal, acti
   const maxOutputTokens = envInt("GEMINI_MAX_OUTPUT_TOKENS", 8192, 4096, 16384);
   const maxContinuations = envInt("GEMINI_MAX_CONTINUATIONS", 1, 0, 1);
   const thinkingBudget = envInt("GEMINI_THINKING_BUDGET", 1024, 0, 4096);
+  const requestAttempts: GeminiAttemptTrace[] = [];
   let lastError: unknown;
 
   for (const model of modelList()) {
@@ -425,10 +446,10 @@ async function generate(prompt: string, files: Part[], signal: AbortSignal, acti
       let executableCode: string | undefined;
       let codeExecutionResult: string | undefined;
 
-      for (let attempt = 0; attempt <= maxContinuations; attempt += 1) {
+      for (let continuationIndex = 0; continuationIndex <= maxContinuations; continuationIndex += 1) {
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-        const continuationInstruction = attempt === 0
+        const continuationInstruction = continuationIndex === 0
           ? prompt
           : `${prompt}\n\n--- ANSWER ALREADY GENERATED (DO NOT REPEAT IT) ---\n${answer}\n--- END PREVIOUS ANSWER ---\n\nYour previous answer stopped only because the output-token ceiling was reached. Continue EXACTLY from the point where it stopped. Do not restart the answer, do not repeat headings or facts already written, and complete every remaining item requested by the user. End normally only after the answer is complete.`;
 
@@ -438,19 +459,27 @@ async function generate(prompt: string, files: Part[], signal: AbortSignal, acti
           ? { includeThoughts: true, thinkingLevel: "low" }
           : { includeThoughts: true, thinkingBudget: isLite ? Math.min(512, thinkingBudget) : thinkingBudget };
 
-        const response = await ai.models.generateContent({
+        const managed = await runGeminiRequest({
           model,
-          contents: [{ role: "user", parts: [{ text: continuationInstruction }, ...files] }],
-          config: {
-            systemInstruction: systemPrompt(activeSkillIds),
-            temperature: 0.18,
-            topP: 0.82,
-            maxOutputTokens,
-            thinkingConfig: thinkingConfig as never,
-            tools: [{ codeExecution: {} }],
-            abortSignal: signal,
-          },
+          operation: continuationIndex === 0 ? "final_answer" : `final_answer_continuation_${continuationIndex}`,
+          signal,
+          maxAttempts: envInt("GEMINI_FINAL_MAX_ATTEMPTS", 4, 1, 5),
+          call: () => ai.models.generateContent({
+            model,
+            contents: [{ role: "user", parts: [{ text: continuationInstruction }, ...files] }],
+            config: {
+              systemInstruction: systemPrompt(activeSkillIds),
+              temperature: 0.18,
+              topP: 0.82,
+              maxOutputTokens,
+              thinkingConfig: thinkingConfig as never,
+              tools: [{ codeExecution: {} }],
+              abortSignal: signal,
+            },
+          }),
         });
+        requestAttempts.push(...managed.attempts);
+        const response = managed.value;
 
         const candidate = response.candidates?.[0];
         const candidateParts = candidate?.content?.parts ?? [];
@@ -477,19 +506,30 @@ async function generate(prompt: string, files: Part[], signal: AbortSignal, acti
         if (!answer) throw new Error(`GEMINI_EMPTY_RESPONSE${finishReason ? `:${finishReason}` : ""}`);
 
         if (finishReason !== "MAX_TOKENS") {
-          return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "STOP", finishMessage, outputTokens, thoughtTokens, thoughtSummary, continuations, truncated: false, thinkingBudget };
+          return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "STOP", finishMessage, outputTokens, thoughtTokens, thoughtSummary, continuations, truncated: false, thinkingBudget, requestAttempts };
         }
 
-        if (attempt < maxContinuations) continuations += 1;
+        if (continuationIndex < maxContinuations) continuations += 1;
       }
 
-      if (answer) return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "MAX_TOKENS", finishMessage, outputTokens, thoughtTokens, thoughtSummary, continuations, truncated: true, thinkingBudget };
+      if (answer) return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "MAX_TOKENS", finishMessage, outputTokens, thoughtTokens, thoughtSummary, continuations, truncated: true, thinkingBudget, requestAttempts };
     } catch (error) {
       lastError = error;
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/429|RESOURCE_EXHAUSTED|404|NOT_FOUND|unavailable|400|INVALID_ARGUMENT|not supported|unsupported|tool use|thinking/i.test(message)) throw error;
+      if (error instanceof GeminiRequestError) requestAttempts.push(...error.attempts);
+      const diagnosed = error instanceof GeminiRequestError ? error.info : diagnoseGeminiError(error);
+
+      // Transient 429/503/timeouts are already retried with pacing and exponential backoff.
+      // Do NOT immediately jump to another model: that was the old behavior that could turn one
+      // rate-limit event into a burst of extra API requests and also hide the original error.
+      if (diagnosed.retryable || diagnosed.dailyQuota) throw error;
+
+      // Only compatibility/model availability failures may fall through to an explicitly configured
+      // second model. The default model list now contains Flash only.
+      const compatibilityFailure = diagnosed.status === 404 || /NOT_FOUND|not supported|unsupported|model.*not.*found/i.test(`${diagnosed.code ?? ""} ${diagnosed.providerMessage}`);
+      if (!compatibilityFailure) throw error;
     }
   }
+  if (lastError instanceof GeminiRequestError) throw lastError;
   throw lastError ?? new Error("GEMINI_MODELS_UNAVAILABLE");
 }
 
@@ -623,11 +663,22 @@ export async function POST(request: Request) {
   debugEvents.push({
     id: "quota-guard",
     kind: "quota",
-    title: "Gemini Free quota guard",
+    title: "Gemini pacing & retry guard",
     status: "done",
-    summary: `خطة محافظة: ${preflight.plan ? "طلب توجيه واحد صغير على Flash-Lite + " : ""}طلب نهائي واحد على Flash، واستمرار واحد فقط إذا انتهى بسبب MAX_TOKENS. لا يتم استخدام Gemini Pro.`,
-    input: { cooldownSeconds: cooldownMs / 1000, dailyOfficeLimit: dailyLimit, preflightModel: preflight.plan ? (process.env.GEMINI_PREFLIGHT_MODEL || "gemini-2.5-flash-lite") : "skipped", finalModels: modelList(), maxContinuations: 1 },
-    output: { policy: "مصمم ليبقى دون الحدود المذكورة في ملف gemini_free_req: Flash 10-15 RPM وFlash-Lite 15-30 RPM، مع حد داخلي أشد." },
+    summary: `لا يتم إطلاق استدعاءات Gemini بشكل متتابع فورياً. Flash محجوز بفاصل افتراضي 7 ثوانٍ بين بدايات الطلبات، وFlash-Lite بفاصل 4.5 ثانية، مع تراجع أُسّي + jitter على 429/408/5xx. عقدة التوجيه اختيارية وإذا فشلت يستمر المسار الحتمي.`,
+    input: {
+      userQuestionCooldownSeconds: cooldownMs / 1000,
+      dailyOfficeQuestionLimit: dailyLimit,
+      preflightModel: preflight.plan ? (process.env.GEMINI_PREFLIGHT_MODEL || "gemini-2.5-flash-lite") : "skipped",
+      finalModels: modelList(),
+      flashMinIntervalMs: Number(process.env.GEMINI_FLASH_MIN_INTERVAL_MS ?? 7000),
+      flashLiteMinIntervalMs: Number(process.env.GEMINI_FLASH_LITE_MIN_INTERVAL_MS ?? 4500),
+      globalMinIntervalMs: Number(process.env.GEMINI_GLOBAL_MIN_INTERVAL_MS ?? 2000),
+      preflightMaxAttempts: Number(process.env.GEMINI_PREFLIGHT_MAX_ATTEMPTS ?? 3),
+      finalMaxAttempts: Number(process.env.GEMINI_FINAL_MAX_ATTEMPTS ?? 4),
+      maxContinuations: Number(process.env.GEMINI_MAX_CONTINUATIONS ?? 1),
+    },
+    output: { policy: "Conservative free-tier pacing; transient provider errors are retried before the request is allowed to fail. Gemini Pro is never selected by default." },
   });
 
   started = Date.now();
@@ -712,12 +763,27 @@ ${logoAccess.context}`;
   try {
     const result = await generate(prompt, preparedFiles.parts, request.signal, activeSkillIds);
     nodes.push({ id: "code", label: "Python sandbox", status: result.executableCode || result.codeExecutionResult ? "done" : "skipped", ms: 0, detail: result.executableCode ? "executed" : undefined });
+    const geminiRetryCount = result.requestAttempts.filter((attempt) => attempt.status === "retry").length;
+    const geminiWaitMs = result.requestAttempts.reduce((sum, attempt) => sum + attempt.pacedMs + attempt.backoffMs, 0);
     nodes.push({
       id: "gemini",
       label: result.model,
       status: result.truncated ? "error" : "done",
       ms: Date.now() - started,
-      detail: `${result.outputTokens || 0} output · ${result.thoughtTokens || 0} thought · ${result.finishReason}${result.continuations ? ` · ${result.continuations} continuation` : ""}`,
+      detail: `${result.outputTokens || 0} output · ${result.thoughtTokens || 0} thought · ${result.finishReason}${result.continuations ? ` · ${result.continuations} continuation` : ""}${geminiRetryCount ? ` · ${geminiRetryCount} retries` : ""}${geminiWaitMs ? ` · ${(geminiWaitMs / 1000).toFixed(1)}s pacing` : ""}`,
+    });
+
+    debugEvents.push({
+      id: "gemini-request-pacing",
+      kind: "quota",
+      title: "Gemini request pacing & retries",
+      status: "done",
+      ms: Date.now() - started,
+      summary: geminiRetryCount
+        ? `واجه Gemini رفضاً مؤقتاً وتمت إعادة المحاولة ${geminiRetryCount} مرة بعد التباعد والتراجع الأُسّي حتى نجح الطلب.`
+        : "تم تنفيذ استدعاء Gemini ضمن بوابة التباعد ولم يحتج إلى Retry من المزود.",
+      input: { model: result.model, operation: "final_answer" },
+      output: { totalPacingAndBackoffMs: geminiWaitMs, retries: geminiRetryCount, requestAttempts: result.requestAttempts },
     });
 
     debugEvents.push({
@@ -728,7 +794,7 @@ ${logoAccess.context}`;
       ms: Date.now() - started,
       summary: result.thoughtSummary ? result.thoughtSummary.slice(0, 5000) : "استخدم Gemini ميزانية التفكير المحددة، لكن API لم يُرجع ملخص تفكير نصي لهذه الإجابة.",
       input: { model: result.model, thinkingBudget: result.thinkingBudget, activeSkillIds },
-      output: { thoughtTokens: result.thoughtTokens, outputTokens: result.outputTokens, finishReason: result.finishReason, continuations: result.continuations },
+      output: { thoughtTokens: result.thoughtTokens, outputTokens: result.outputTokens, finishReason: result.finishReason, continuations: result.continuations, requestAttempts: result.requestAttempts },
     });
 
     const allResearchEvidence = [...officialEvidence, ...supplementalTavilyEvidence];
@@ -749,9 +815,59 @@ ${logoAccess.context}`;
     const newsSources = curatedNewsSources.length ? curatedNewsSources : isLegalNewsQuery(parsed.message) ? legalNewsForAgent([...todayNews, ...homepageNews]).sources.map((source, index) => ({ ...source, citationId: `N${index + 1}`, sourceType: "news" as const })) : [];
     return NextResponse.json({ ok: true, answer: result.text, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
   } catch (error) {
-    nodes.push({ id: "gemini", label: "Gemini", status: "error", ms: Date.now() - started });
-    const message = error instanceof Error ? error.message : "AI_ERROR";
-    const quota = /429|RESOURCE_EXHAUSTED/i.test(message);
-    return NextResponse.json({ ok: false, message: quota ? "تم بلوغ حد Gemini مؤقتاً. انتظر دقيقة ثم حاول مجدداً." : message === "GEMINI_API_KEY_MISSING" ? "مفتاح Gemini غير مضبوط على الخادم." : "تعذر إنشاء الإجابة حالياً.", nodes }, { status: quota ? 429 : 503 });
+    const rawMessage = error instanceof Error ? error.message : "AI_ERROR";
+    const diagnosed = rawMessage === "GEMINI_API_KEY_MISSING"
+      ? { status: 503, code: "GEMINI_API_KEY_MISSING", providerMessage: rawMessage, retryable: false, dailyQuota: false, retryAfterMs: undefined, userMessage: "مفتاح Gemini غير مضبوط على الخادم." }
+      : error instanceof GeminiRequestError ? error.info : diagnoseGeminiError(error);
+    const attempts = error instanceof GeminiRequestError ? error.attempts : [];
+    const detail = [diagnosed.status ? `HTTP ${diagnosed.status}` : "provider error", diagnosed.code, attempts.length ? `${attempts.length} attempt${attempts.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+    nodes.push({ id: "gemini", label: "Gemini", status: "error", ms: Date.now() - started, detail });
+    debugEvents.push({
+      id: "gemini-provider-error",
+      kind: diagnosed.status === 429 ? "quota" : "tool",
+      title: "Gemini provider error",
+      status: "error",
+      ms: Date.now() - started,
+      summary: diagnosed.userMessage,
+      input: { models: modelList(), operation: "final_answer" },
+      output: {
+        httpStatus: diagnosed.status,
+        code: diagnosed.code,
+        retryable: diagnosed.retryable,
+        dailyQuota: diagnosed.dailyQuota,
+        retryAfterMs: diagnosed.retryAfterMs,
+        providerMessage: diagnosed.providerMessage,
+        requestAttempts: attempts,
+      },
+    });
+
+    const retryAfter = diagnosed.status === 429 && !diagnosed.dailyQuota
+      ? Math.max(5, Math.ceil((diagnosed.retryAfterMs ?? 30_000) / 1000))
+      : undefined;
+    const status = diagnosed.status === 429 ? 429 : diagnosed.status === 503 ? 503 : rawMessage === "GEMINI_API_KEY_MISSING" ? 503 : 502;
+    const message = diagnosed.status === 429 && attempts.length
+      ? `${diagnosed.userMessage} تمت ${attempts.length} محاولة تلقائية مع التباعد والتراجع قبل إيقاف الطلب.`
+      : diagnosed.userMessage;
+    return NextResponse.json({
+      ok: false,
+      message,
+      retryAfter,
+      nodes,
+      debugEvents,
+      error: {
+        provider: "gemini",
+        httpStatus: diagnosed.status,
+        code: diagnosed.code,
+        retryable: diagnosed.retryable,
+        dailyQuota: diagnosed.dailyQuota,
+        retryAfterMs: diagnosed.retryAfterMs,
+        providerMessage: diagnosed.providerMessage,
+        attempts,
+      },
+      totalMs: Date.now() - totalStarted,
+    }, {
+      status,
+      headers: retryAfter ? { "Retry-After": String(retryAfter) } : undefined,
+    });
   } finally { await cleanupUploadedFiles(preparedFiles.uploadedNames); }
 }
