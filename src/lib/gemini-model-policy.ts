@@ -83,6 +83,9 @@ export function selectGeminiModelPolicy(input: {
   if (skillIds.length >= 4) { score += 1; reasons.push(`${skillIds.length} مهارات قانونية فعالة`); }
   if ((input.officialEvidenceCount ?? 0) >= 2) reasons.push("مصادر رسمية متاحة");
 
+  const attachmentOnlyCommand = fileCount > 0 && text.length <= 80 && /^(?:جاوب|أجب|اجب|حلل|حل|راجع|اشرح|اقرأ|اقرا|شوف|جوف|ابدأ|ابدء|answer|analyze|analyse|review|read)(?:\s|$)/i.test(text);
+  if (attachmentOnlyCommand) reasons.push("أمر قصير يعتمد على قراءة المرفق");
+
   const shortNonLegal = !legalIntent && !input.webSearch && fileCount === 0 && text.length <= 700;
 
   let workload: GeminiWorkload;
@@ -99,7 +102,7 @@ export function selectGeminiModelPolicy(input: {
 
   // Preflight is useful only when attachments need legal anchors. Do not spend a second
   // Gemini call on a simple summary or plain Q&A.
-  const allowPreflight = workload !== "micro" && fileCount > 0 && (legalIntent || constitutional || judgmentResearch || explicitDeep);
+  const allowPreflight = workload !== "micro" && fileCount > 0 && (legalIntent || constitutional || judgmentResearch || explicitDeep || attachmentOnlyCommand);
 
   const settings: Record<GeminiWorkload, Pick<GeminiModelPolicy, "thinkingLevel" | "maxOutputTokens" | "maxContinuations" | "maxGeminiCalls">> = {
     micro: { thinkingLevel: "minimal", maxOutputTokens: 3072, maxContinuations: 0, maxGeminiCalls: 1 },
