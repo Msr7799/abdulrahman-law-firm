@@ -61,6 +61,36 @@ export const agentSkills: AgentSkill[] = [
     ],
     officialSources: ["https://www.moj.gov.bh", "https://legalaffairs.gov.bh"],
   },
+
+  {
+    id: "constitutional-review-analysis",
+    title: "تحليل الرقابة الدستورية",
+    instructions: [
+      "حدد النص الدستوري الحاكم أولاً، ثم النص الأدنى المطعون فيه، ولا تفترض التعارض قبل قراءة النصين.",
+      "افحص اختصاص المحكمة الدستورية، وصفة مقدم الطلب، ومسألة الأعمال السياسية قبل الدخول في الموضوع.",
+      "حلل سمو الدستور والفصل والتعاون بين السلطات وحدود السلطة التنظيمية، ثم بين الأثر الزمني للحكم من النص الرسمي لا من قاعدة عامة مفترضة.",
+      "في الأحكام المنشورة، ميّز بين الوقائع وأسباب الحكم والمنطوق، ولا تستبدل الحكم الرسمي بتوقع احتمالي إذا كان الحكم متاحاً.",
+    ],
+    officialSources: [
+      "https://www.lloc.gov.bh/Legislation",
+      "https://www.lloc.gov.bh/OfficialGazette",
+    ],
+  },
+  {
+    id: "bahrain-judgment-research",
+    title: "البحث في الأحكام والسوابق البحرينية",
+    instructions: [
+      "إذا احتوى المستند أو السؤال رابط حكم رسمي أو رقم قضية فابدأ به مباشرة قبل أي بحث عام.",
+      "فضّل أحكام المحكمة الدستورية المنشورة لدى هيئة التشريع وأحكام المحاكم المنشورة لدى المجلس الأعلى للقضاء على أي تلخيص صحفي.",
+      "تحقق أن النتيجة تتعلق بذات رقم القضية أو ذات المسألة القانونية، وارفض نتائج البحث التي تتطابق في المجال فقط دون الوقائع أو النصوص.",
+      "استشهد بالحكم الرسمي مع بيان المحكمة والتاريخ ورقم القضية أو الطلب متى كان متاحاً.",
+    ],
+    officialSources: [
+      "https://www.lloc.gov.bh/Legislation/Search",
+      "https://ahkam.sjc.bh",
+      "https://www.sjc.bh",
+    ],
+  },
   {
     id: "source-and-citation-discipline",
     title: "انضباط البحث والاستشهاد",
@@ -74,10 +104,16 @@ export const agentSkills: AgentSkill[] = [
   },
 ];
 
-export function agentSkillsForPrompt() {
-  return agentSkills.map((skill) => [
+export function agentSkillsForPrompt(activeIds?: string[]) {
+  const active = activeIds?.length ? new Set(activeIds) : null;
+  return agentSkills.filter((skill) => !active || active.has(skill.id)).map((skill) => [
     `SKILL ${skill.id}: ${skill.title}`,
     ...skill.instructions.map((instruction, index) => `${index + 1}. ${instruction}`),
     `Official anchors: ${skill.officialSources.join(" | ")}`,
   ].join("\n")).join("\n\n");
+}
+
+export function agentSkillsByIds(ids: string[]) {
+  const wanted = new Set(ids);
+  return agentSkills.filter((skill) => wanted.has(skill.id));
 }

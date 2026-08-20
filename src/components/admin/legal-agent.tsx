@@ -19,8 +19,9 @@ type NodeResult = { id: string; label: string; status: "done" | "skipped" | "err
 type CaseMatch = { id: string; caseNumber: string; caseYear: number; caseType: string; clientName: string; accusedName?: string; victimName?: string; court?: string; status?: string; judgment?: string; judgeName?: string; notes?: string; nextHearing?: string; score: number };
 type ChatAttachment = { id: string; name: string; type: string; size: number; previewUrl?: string };
 type PendingAttachment = ChatAttachment & { file: File };
-type GenerationInfo = { finishReason?: string; finishMessage?: string; outputTokens?: number; continuations?: number; truncated?: boolean };
-type ChatMessage = { id: string; role: "user" | "assistant"; content: string; attachments?: ChatAttachment[]; model?: string; nodes?: NodeResult[]; code?: string; codeResult?: string; sources?: AgentSource[]; images?: AgentImage[]; caseMatches?: CaseMatch[]; generation?: GenerationInfo };
+type GenerationInfo = { finishReason?: string; finishMessage?: string; outputTokens?: number; thoughtTokens?: number; thinkingBudget?: number; continuations?: number; truncated?: boolean };
+type DebugEvent = { id: string; kind: "thinking" | "tool" | "skill" | "validation" | "quota"; title: string; status: "done" | "skipped" | "error"; ms?: number; summary?: string; input?: unknown; output?: unknown };
+type ChatMessage = { id: string; role: "user" | "assistant"; content: string; attachments?: ChatAttachment[]; model?: string; nodes?: NodeResult[]; debugEvents?: DebugEvent[]; code?: string; codeResult?: string; sources?: AgentSource[]; images?: AgentImage[]; caseMatches?: CaseMatch[]; generation?: GenerationInfo };
 type StoredConversation = { id: string; title: string; createdAt: number; updatedAt: number; messages: ChatMessage[] };
 type SpeechResultEvent = { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> };
 type SpeechRecognitionLike = { lang: string; continuous: boolean; interimResults: boolean; start(): void; stop(): void; onresult: ((event: SpeechResultEvent) => void) | null; onerror: (() => void) | null; onend: (() => void) | null };
@@ -98,6 +99,51 @@ function linkCaseCitations(content: string, messageId: string, caseCount: number
     const index = Number(rawIndex);
     return index >= 1 && index <= caseCount ? `${label}(#case-${messageId}-${index})` : label;
   });
+}
+
+
+function linkEvidenceCitations(content: string, messageId: string, sources?: AgentSource[]) {
+  const ids = new Set((sources ?? []).map((source) => source.citationId).filter(Boolean));
+  return content.replace(/\[(O\d+|W\d+|N\d+)\](?!\()/g, (label, citationId: string) => ids.has(citationId) ? `${label}(#source-${messageId}-${citationId})` : label);
+}
+
+function prettyDebugValue(value: unknown) {
+  if (typeof value === "string") return value;
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
+function DebugTrace({ events, nodes, ar }: { events?: DebugEvent[]; nodes?: NodeResult[]; ar: boolean }) {
+  if ((!events || events.length === 0) && (!nodes || nodes.length === 0)) return null;
+  return (
+    <section className="mb-5 space-y-2 rounded-md border border-white/10 bg-black/[.08] p-2.5">
+      <div className="flex items-center justify-between gap-3 px-1 py-1">
+        <div className="flex items-center gap-2 text-xs font-bold text-white/70"><Sparkles size={14} className="text-[#d0ad69]" />{ar ? "تتبّع الوكيل" : "Agent trace"}</div>
+        <span className="text-[9px] text-white/30">{ar ? "ملخصات تفكير وأدوات، وليست سلسلة التفكير الخام" : "Reasoning summaries and tool traces, not raw chain-of-thought"}</span>
+      </div>
+      {(events ?? []).map((event) => {
+        const label = event.kind === "thinking" ? (ar ? "التفكير" : "Thinking") : event.kind === "tool" ? (ar ? "أداة" : "Tool") : event.kind === "skill" ? (ar ? "مهارة" : "Skill") : event.kind === "quota" ? (ar ? "حماية الكوتا" : "Quota guard") : (ar ? "تحقق" : "Validation");
+        const tone = event.status === "error" ? "border-red-400/25" : event.kind === "thinking" ? "border-violet-400/20" : event.kind === "skill" ? "border-[#b89555]/25" : "border-white/10";
+        return <details key={event.id} className={`group overflow-hidden rounded-md border ${tone} bg-white/[.018]`}>
+          <summary className="focus-ring flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 text-[11px] text-white/65">
+            {event.status === "done" ? <CheckCircle2 size={13} className="shrink-0 text-emerald-400" /> : event.status === "error" ? <ShieldAlert size={13} className="shrink-0 text-red-400" /> : <CircleDashed size={13} className="shrink-0 text-white/35" />}
+            <span className="rounded-sm border border-white/8 bg-white/[.03] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-white/35">{label}</span>
+            <strong className="min-w-0 flex-1 truncate font-medium text-white/70" dir="auto">{event.title}</strong>
+            {typeof event.ms === "number" && event.ms > 0 && <span className="shrink-0 text-[9px] text-white/30">{event.ms}ms</span>}
+            <ChevronDown size={13} className="shrink-0 transition group-open:rotate-180" />
+          </summary>
+          <div className="border-t border-white/8 px-3 py-3 text-[11px] leading-5 text-white/55">
+            {event.summary && <p className="mb-3 whitespace-pre-wrap" dir="auto">{event.summary}</p>}
+            {event.input !== undefined && <div className="mb-3"><div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-white/30">INPUT</div><pre className="max-h-56 overflow-auto rounded-md border border-white/8 bg-black/20 p-2.5 text-[10px] leading-5 text-white/60" dir="ltr">{prettyDebugValue(event.input)}</pre></div>}
+            {event.output !== undefined && <div><div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-white/30">OUTPUT</div><pre className="max-h-72 overflow-auto rounded-md border border-white/8 bg-black/20 p-2.5 text-[10px] leading-5 text-white/60" dir="ltr">{prettyDebugValue(event.output)}</pre></div>}
+          </div>
+        </details>;
+      })}
+      {nodes && nodes.length > 0 && <details className="group overflow-hidden rounded-md border border-white/10 bg-white/[.018]">
+        <summary className="focus-ring flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 text-[11px] text-white/65"><CircleDashed size={13} className="text-[#d0ad69]" /><span className="rounded-sm border border-white/8 bg-white/[.03] px-1.5 py-0.5 text-[9px] uppercase text-white/35">NODES</span><strong className="flex-1 font-medium">{ar ? "مسار التنفيذ" : "Execution pipeline"}</strong><ChevronDown size={13} className="transition group-open:rotate-180" /></summary>
+        <div className="flex flex-wrap gap-2 border-t border-white/8 p-3">{nodes.map((node) => <span key={node.id} title={node.detail} className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] ${node.status === "done" ? "border-emerald-600/30 bg-emerald-500/8 text-emerald-300" : node.status === "error" ? "border-red-400/20 bg-red-400/8 text-red-300" : "border-white/10 text-white/35"}`}>{node.status === "done" ? <CheckCircle2 size={11} /> : <CircleDashed size={11} />}{node.label}{node.ms > 0 && ` · ${node.ms}ms`}{node.detail && <span className="opacity-60"> · {node.detail}</span>}</span>)}</div>
+      </details>}
+    </section>
+  );
 }
 
 function NewChatIcon({ className = "" }: { className?: string }) {
@@ -438,7 +484,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     const nextConversationId = conversationId || crypto.randomUUID();
     const withUserMessage = [...baseMessages, userMessage];
     attachmentFilesRef.current.set(userMessage.id, selectedAttachments);
-    setConversationId(nextConversationId); setMessages(withUserMessage); if (!options) { setAttachments([]); setInput(""); window.localStorage.setItem(`legal-agent-draft:${user.uid}`, ""); } setEditingMessageId(""); setStoppedTyping(null); setBusy(true); setError(""); setCooldownUntil(requestedAt + 10_000); setClock(requestedAt);
+    setConversationId(nextConversationId); setMessages(withUserMessage); if (!options) { setAttachments([]); setInput(""); window.localStorage.setItem(`legal-agent-draft:${user.uid}`, ""); } setEditingMessageId(""); setStoppedTyping(null); setBusy(true); setError(""); setCooldownUntil(requestedAt + 15_000); setClock(requestedAt);
     window.localStorage.setItem(`legal-agent-active-conversation:${user.uid}`, nextConversationId);
     void saveConversation(nextConversationId, withUserMessage, question, requestedAt);
     try {
@@ -456,7 +502,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
       const response = await fetch("/api/admin/agent", { method: "POST", headers: { authorization: `Bearer ${token}` }, body: form, signal: controller.signal });
       const body = await response.json();
       if (!response.ok || !body.ok) throw new Error(body.message || "AI_ERROR");
-      const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: "assistant", content: body.answer, model: body.model, nodes: body.nodes, code: body.code, codeResult: body.codeResult, sources: body.sources, images: body.images, caseMatches: body.caseMatches, generation: body.generation };
+      const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: "assistant", content: body.answer, model: body.model, nodes: body.nodes, debugEvents: body.debugEvents, code: body.code, codeResult: body.codeResult, sources: body.sources, images: body.images, caseMatches: body.caseMatches, generation: body.generation };
       const completedMessages = [...withUserMessage, assistantMessage];
       setMessages(completedMessages);
       setBusy(false);
@@ -540,13 +586,15 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
       </div>
       <ol className="mt-5 grid gap-4 text-xs leading-6 text-white/50 sm:grid-cols-2 xl:grid-cols-1">
         <li><strong className="block text-white/75">01 · Firebase Auth</strong>{ar ? "يتحقق من هوية وبريد الأدمن." : "Verifies administrator identity."}</li>
-        <li><strong className="block text-white/75">02 · Case RAG</strong>{ar ? "يرتب القضايا حسب صلتها بالسؤال." : "Ranks cases by relevance."}</li>
-        <li><strong className="block text-white/75">03 · Bahrain News Feed</strong>{ar ? "يقرأ أخبار اليوم وكل الأخبار المعروضة حاليًا في الموقع من نفس خط التجميع." : "Reads today's Bahrain news and the exact current site news feed."}</li>
-        <li><strong className="block text-white/75">04 · Logo Directory</strong>{ar ? "يبحث داخل bahrain-logos-all-categorized.html ويجهز الشعارات المناسبة للإجابة." : "Searches bahrain-logos-all-categorized.html and prepares relevant logos for answers."}</li>
-        <li><strong className="block text-white/75">05 · Tavily</strong>{ar ? "يجلب مصادر وصورًا إضافية عند تشغيل البحث الخارجي." : "Fetches additional sources and images when external search is enabled."}</li>
-        <li><strong className="block text-white/75">06 · Attachments</strong>{ar ? "يضغط PDF الكبير تلقائياً عند الحاجة ثم يرفعه ويقرأه كاملاً." : "Auto-compresses large PDFs when needed, then uploads and reads them in full."}</li>
-        <li><strong className="block text-white/75">07 · Python Sandbox</strong>{ar ? "ينفذ الحسابات والتحليل البرمجي في بيئة معزولة." : "Runs calculations and code analysis in an isolated environment."}</li>
-        <li><strong className="block text-white/75">08 · Gemini</strong>{ar ? "يطبق المهارات القضائية ويصوغ الإجابة." : "Applies legal skills and drafts the answer."}</li>
+        <li><strong className="block text-white/75">02 · Case RAG</strong>{ar ? "يرتب قضايا المكتب حسب الصلة ولا يخلطها بالمصادر العامة." : "Ranks office cases without mixing them with public sources."}</li>
+        <li><strong className="block text-white/75">03 · Official Source Router</strong>{ar ? "يستخرج روابط الأحكام والتشريعات الرسمية من السؤال والمرفقات، ويستخدم Flash-Lite فقط عند الحاجة." : "Extracts official judgment/legislation anchors and uses Flash-Lite only when needed."}</li>
+        <li><strong className="block text-white/75">04 · Bahrain Official RAG</strong>{ar ? "يفتح المصدر البحريني الرسمي مباشرة ويقرأ النص قبل Tavily." : "Fetches and reads the Bahrain official source before Tavily."}</li>
+        <li><strong className="block text-white/75">05 · Tavily + Relevance Gate</strong>{ar ? "يبحث بشكل تكميلي ويرفض النتائج غير المرتبطة حتى لو كانت حكومية." : "Adds supplemental search and rejects irrelevant results even when governmental."}</li>
+        <li><strong className="block text-white/75">06 · Legal Skills Router</strong>{ar ? "يفعّل فقط المهارات المناسبة مثل الدستوري، الأحكام، أو التحقق من التشريع." : "Activates only relevant skills such as constitutional, judgments, or legislation verification."}</li>
+        <li><strong className="block text-white/75">07 · News + Logo Directory</strong>{ar ? "يقرأ أخبار البحرين المعروضة بالموقع ويجهز الشعارات المناسبة." : "Reads current site news and prepares relevant Bahrain logos."}</li>
+        <li><strong className="block text-white/75">08 · Attachments + PDF</strong>{ar ? "يضغط PDF الكبير عند الحاجة ويحافظ على الموقّع رقمياً." : "Compresses large PDFs when needed and preserves signed files."}</li>
+        <li><strong className="block text-white/75">09 · Gemini Thinking</strong>{ar ? "يستخدم ميزانية تفكير محدودة ويعرض ملخص التفكير الرسمي من API عند توفره." : "Uses a bounded thinking budget and exposes the API thought summary when available."}</li>
+        <li><strong className="block text-white/75">10 · Citation Validation</strong>{ar ? "يتحقق أن مراجع [O#] و[W#] موجودة فعلاً قبل عرض حالة التنفيذ." : "Validates [O#] and [W#] evidence references."}</li>
       </ol>
       <div className="mt-5 border-s-2 border-amber-400/60 bg-amber-400/5 p-4 text-xs leading-6 text-amber-100/70 xl:mt-7">
         {ar ? "المرفقات القانونية قد تكون حساسة. راجع النص الرسمي وملف القضية قبل اعتماد أي رأي أو إجراء." : "Legal attachments may be sensitive. Review official law and the full case file before relying on any conclusion or action."}
@@ -567,7 +615,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white/[.04] text-[#d0ad69]"><Bot size={17} /></span>
             <div className="min-w-0">
               <h2 className="truncate text-[12px] font-bold text-white/85 sm:text-sm">{ar ? "الوكيل القانوني" : "Legal agent"}</h2>
-              <p className="hidden truncate text-[9px] text-white/35 sm:block">RAG · Tavily · Gemini</p>
+              <p className="hidden truncate text-[9px] text-white/35 sm:block">Official RAG · Tavily · Gemini</p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -606,7 +654,8 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
                 {message.attachments && message.attachments.length > 0 && <MessageAttachments attachments={message.attachments} ar={ar} />}
                 {message.role === "assistant" ? (
                   <div className="min-w-0 break-words [overflow-wrap:anywhere] [&_a]:break-all [&_code]:break-words [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
-                    <MarkdownAnswer images={answerSettled ? message.images : undefined}>{linkCaseCitations(visibleContent, message.id, answerSettled ? (message.caseMatches?.length ?? 0) : 0)}</MarkdownAnswer>
+                    <DebugTrace events={message.debugEvents} nodes={message.nodes} ar={ar} />
+                    <MarkdownAnswer images={answerSettled ? message.images : undefined}>{linkEvidenceCitations(linkCaseCitations(visibleContent, message.id, answerSettled ? (message.caseMatches?.length ?? 0) : 0), message.id, message.sources)}</MarkdownAnswer>
                     {answerSettled && message.generation?.truncated && (
                       <div className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-200">
                         {ar ? "وصلت الإجابة إلى حد الإخراج حتى بعد محاولات الإكمال التلقائي. أعد التوليد لإكمالها؛ لن يعرض النظام الرد كأنه مكتمل بصمت." : "The answer reached the output limit even after automatic continuation attempts. Regenerate to complete it; the app will not silently present it as complete."}
@@ -650,10 +699,10 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
                 ) : (
                   <><p className="whitespace-pre-wrap break-words leading-7 [overflow-wrap:anywhere]">{message.content}</p><div className="mt-2 flex justify-end"><AgentButton type="button" disabled={responseActive} onClick={() => { setEditingMessageId(message.id); setEditValue(message.content); }} className="focus-ring flex min-h-8 items-center gap-1.5 rounded-md border border-[#10191b]/20 px-2 text-[11px] text-[#10191b]/65 hover:bg-black/5"><Pencil size={13} />{ar ? "تعديل" : "Edit"}</AgentButton></div></>
                 )}
-                {answerSettled && message.nodes && <div className="mt-5 flex flex-wrap gap-2 border-t border-white/8 pt-4">{message.nodes.map((node) => <span key={node.id} title={node.detail} className={`flex items-center gap-1.5 border px-2.5 py-1 text-[10px] ${node.status === "done" ? "border-emerald-600/40 bg-emerald-100 text-emerald-800" : node.status === "error" ? "border-red-400/20 bg-red-400/10 text-red-700" : "border-white/10 text-white/35"}`}>{node.status === "done" ? <CheckCircle2 size={12} /> : <CircleDashed size={12} />}{node.label}{node.ms > 0 && ` · ${node.ms}ms`}{node.detail && <span className="hidden opacity-70 2xl:inline"> · {node.detail}</span>}</span>)}</div>}
+                
                 {answerSettled && (message.code || message.codeResult) && <details className="mt-4 border border-violet-300/15 bg-violet-300/5 p-3"><summary className="flex cursor-pointer items-center gap-2 text-xs font-bold text-violet-200"><TerminalSquare size={14} />{ar ? "تنفيذ Python المعزول" : "Sandboxed Python execution"}</summary>{message.code && <pre className="mt-3 max-h-64 max-w-full overflow-auto bg-black/25 p-3 text-[11px] leading-5 text-violet-100" dir="ltr"><code>{message.code}</code></pre>}{message.codeResult && <pre className="mt-2 max-h-52 max-w-full overflow-auto border-t border-white/10 p-3 text-[11px] leading-5 text-white/60" dir="ltr">{message.codeResult}</pre>}</details>}
                 {answerSettled && message.caseMatches && message.caseMatches.length > 0 && <section className="mt-4 border border-[#b89555]/20 bg-[#b89555]/5 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xs font-bold text-[#e2c98f]">{ar ? `القضايا المشار إليها (${message.caseMatches.length})` : `Referenced cases (${message.caseMatches.length})`}</h3>{onOpenCases && <AgentButton type="button" onClick={onOpenCases} className="focus-ring min-h-9 border border-[#b89555]/25 px-3 text-[10px] font-bold text-[#e2c98f] hover:bg-[#b89555]/10">{ar ? "فتح قسم القضايا" : "Open cases section"}</AgentButton>}</div><div className="mt-3 grid gap-2">{message.caseMatches.map((item, index) => <details id={`case-${message.id}-${index + 1}`} key={item.id} className="scroll-mt-24 border border-white/10 bg-black/10 p-3 open:border-[#b89555]/40 open:bg-[#b89555]/5"><summary className="flex cursor-pointer flex-wrap items-center gap-2 text-xs font-bold"><AgentCaseLogoCluster item={item} ar={ar} /><span className="rounded-sm bg-[#b89555]/15 px-1.5 py-0.5 text-[#e2c98f]">[C{index + 1}]</span><span dir="ltr">{item.caseNumber}/{item.caseYear}</span><span className="min-w-0 break-words text-white/45">{item.caseType} · {item.clientName}</span></summary><dl className="mt-3 grid gap-x-5 gap-y-2 border-t border-white/8 pt-3 text-[11px] leading-5 sm:grid-cols-2">{[[ar ? "المحكمة" : "Court", item.court], [ar ? "الحالة" : "Status", item.status], [ar ? "المتهم/الخصم" : "Accused/opponent", item.accusedName], [ar ? "المجني عليه" : "Victim", item.victimName], [ar ? "القاضي/الهيئة" : "Judge/panel", item.judgeName], [ar ? "الجلسة القادمة" : "Next hearing", item.nextHearing], [ar ? "الحكم" : "Judgment", item.judgment], [ar ? "الملاحظات" : "Notes", item.notes]].filter((entry) => entry[1]).map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-white/35">{label}</dt><dd className="break-words text-white/75">{value}</dd></div>)}</dl></details>)}</div></section>}
-                {answerSettled && message.sources && message.sources.length > 0 && <details className="mt-5 border border-white/8 bg-white/[.02] p-3"><summary className="cursor-pointer text-xs font-bold text-[#d0ad69]">{ar ? `مصادر البحث (${message.sources.length})` : `Search sources (${message.sources.length})`}</summary><div className="mt-2 grid gap-2">{message.sources.map((source) => { const favicon = faviconUrl(source.url); return <a key={source.url} href={source.url} target="_blank" rel="noreferrer noopener" className="focus-ring flex min-w-0 items-start gap-2 border border-white/8 p-3 text-xs text-white/65 hover:border-[#b89555]/40 hover:text-white">{favicon ? <Image src={favicon} alt="" width={16} height={16} unoptimized className="mt-0.5 size-4 shrink-0" /> : <ExternalLink className="mt-0.5 shrink-0" size={14} />}<span className="min-w-0 break-words [overflow-wrap:anywhere]">{source.title}</span><ExternalLink className="ms-auto mt-0.5 shrink-0 opacity-40" size={12} /></a>; })}</div></details>}
+                {answerSettled && message.sources && message.sources.length > 0 && <details className="mt-5 rounded-md border border-white/8 bg-white/[.02] p-3"><summary className="cursor-pointer text-xs font-bold text-[#d0ad69]">{ar ? `مصادر البحث (${message.sources.length})` : `Search sources (${message.sources.length})`}</summary><div className="mt-2 grid gap-2">{message.sources.map((source) => { const favicon = faviconUrl(source.url); return <a id={source.citationId ? `source-${message.id}-${source.citationId}` : undefined} key={`${source.citationId ?? "src"}-${source.url}`} href={source.url} target="_blank" rel="noreferrer noopener" className="focus-ring flex min-w-0 scroll-mt-24 items-start gap-2 rounded-md border border-white/8 p-3 text-xs text-white/65 hover:border-[#b89555]/40 hover:text-white">{source.citationId && <span className={`shrink-0 rounded-sm border px-1.5 py-0.5 text-[9px] font-bold ${source.sourceType === "official" ? "border-emerald-400/25 bg-emerald-400/8 text-emerald-300" : source.sourceType === "tavily" ? "border-violet-400/25 bg-violet-400/8 text-violet-300" : "border-sky-400/20 bg-sky-400/8 text-sky-300"}`}>[{source.citationId}]</span>}{favicon ? <Image src={favicon} alt="" width={16} height={16} unoptimized className="mt-0.5 size-4 shrink-0" /> : <ExternalLink className="mt-0.5 shrink-0" size={14} />}<span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]"><strong className="block font-medium">{source.title}</strong>{typeof source.score === "number" && <small className="mt-1 block text-[9px] opacity-45">relevance {source.score.toFixed(1)}</small>}</span><ExternalLink className="ms-auto mt-0.5 shrink-0 opacity-40" size={12} /></a>; })}</div></details>}
                 {answerSettled && message.images && message.images.length > 0 && <details className="mt-5 border border-white/8 bg-white/[.02] p-3"><summary className="flex cursor-pointer items-center gap-2 text-xs font-bold text-[#d0ad69]"><ImageIcon size={14} />{ar ? `صور من نتائج البحث (${message.images.length})` : `Images from search (${message.images.length})`}</summary><div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">{message.images.map((image, index) => <SearchImageCard key={image.url} image={image} featured={index === 0 && message.images!.length > 2} ar={ar} />)}</div></details>}
                 {answerSettled && message.model && <p className="mt-4 text-[10px] text-white/25" dir="ltr">{message.model}</p>}
                 {answerSettled && message.role === "assistant" && message.id !== "welcome" && <div className="mt-3 flex items-center justify-end gap-1 border-t border-white/8 pt-2"><AgentButton type="button" onClick={() => void copyAnswer(message)} title={ar ? "نسخ الإجابة" : "Copy answer"} aria-label={ar ? "نسخ الإجابة" : "Copy answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white">{copiedMessageId === message.id ? <Check className="text-emerald-300" size={16} /> : <Copy size={16} />}</AgentButton><AgentButton type="button" disabled={responseActive || cooldown > 0} onClick={() => retryAssistant(message.id, Date.now())} title={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} aria-label={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white disabled:opacity-30"><RotateCcw size={16} /></AgentButton></div>}
@@ -686,7 +735,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
                 <label className="mt-2 flex items-center justify-between gap-3"><span>{ar ? "دقة الضغط" : "Compression DPI"}</span><select value={pdfDpi} disabled={!autoCompressPdf} onChange={(event) => setPdfDpi(Number(event.target.value))} className="rounded-md border border-white/10 bg-black/20 px-2 py-1.5 text-xs text-white outline-none disabled:opacity-40">{pdfDpiOptions.map((dpi) => <option key={dpi} value={dpi} className="bg-[#101d21]">{dpi} DPI</option>)}</select></label>
                 <p className="mt-2 text-[10px] leading-4 text-white/35">{ar ? "يبدأ الضغط تلقائياً للـPDF الأكبر من 18MB. الملفات الموقعة رقمياً تُحفظ بدون تعديل." : "Compression starts automatically above 18MB. Digitally signed PDFs are kept unchanged."}</p>
               </div>
-              <p className="px-3 pt-2 text-[10px] text-white/30">{ar ? "حتى 5 ملفات · 200MB قبل المعالجة · مهلة 10 ثوانٍ" : "Up to 5 files · 200MB before processing · 10-second cooldown"}</p>
+              <p className="px-3 pt-2 text-[10px] text-white/30">{ar ? "حتى 5 ملفات · 200MB قبل المعالجة · مهلة 15 ثانية" : "Up to 5 files · 200MB before processing · 15-second cooldown"}</p>
             </div>
           )}
 

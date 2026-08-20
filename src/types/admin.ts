@@ -35,5 +35,5 @@ export type DirectoryContact = {
   sortOrder: number;
 };
 
-export type AgentSource = { title: string; url: string; snippet?: string };
+export type AgentSource = { title: string; url: string; snippet?: string; citationId?: string; sourceType?: "official" | "tavily" | "news"; score?: number };
 export type AgentImage = { url: string; displayUrl?: string; description?: string };
