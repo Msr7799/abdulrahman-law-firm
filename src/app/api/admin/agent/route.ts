@@ -44,6 +44,7 @@ type PipelineNode = { id: string; label: string; status: "running" | "done" | "s
 type StreamEnvelope =
   | { type: "node"; node: PipelineNode }
   | { type: "debug"; event: ResearchDebugEvent }
+  | { type: "answer"; content: string; model: string }
   | { type: "final"; status: number; payload: unknown };
 type StreamEmitter = (event: Exclude<StreamEnvelope, { type: "final" }>) => void;
 
@@ -619,6 +620,7 @@ async function generate(
   toolPolicy: GenerationToolPolicy,
   includeServiceRoadmap: boolean,
   onThoughtSummary?: (summary: string, meta: { model: string; attempt?: number; retrying?: boolean }) => void,
+  onAnswerProgress?: (answer: string, meta: { model: string }) => void,
 ) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY_MISSING");
@@ -740,12 +742,16 @@ async function generate(
                 } else {
                   sawVisibleTextPart = true;
                   streamedAnswer += typedPart.text;
+                  onAnswerProgress?.(mergeContinuation(answer, streamedAnswer), { model });
                 }
               }
               // Only use the SDK convenience text accessor when the candidate did not expose any
               // structured text parts. If the chunk contained thought parts, chunk.text can mirror
               // those thoughts and must never leak them into the user-visible answer.
-              if (!sawVisibleTextPart && !sawThoughtTextPart && chunk.text) streamedAnswer += chunk.text;
+              if (!sawVisibleTextPart && !sawThoughtTextPart && chunk.text) {
+                streamedAnswer += chunk.text;
+                onAnswerProgress?.(mergeContinuation(answer, streamedAnswer), { model });
+              }
               if (candidate?.finishReason) streamedFinishReason = String(candidate.finishReason);
               if (candidate?.finishMessage) streamedFinishMessage = candidate.finishMessage;
               streamedOutputTokens = Math.max(streamedOutputTokens, chunk.usageMetadata?.candidatesTokenCount ?? candidate?.tokenCount ?? 0);
@@ -1295,6 +1301,8 @@ ${logoAccess.context}`;
     debugEvents.push({ id: "gemini-thinking", kind: "thinking", title: "Gemini thought summary", status: "running", ms: 0, summary: "أراجع الأدلة المقبولة وأرتب المسائل القانونية قبل صياغة الجواب. سيظهر هنا ملخص التفكير الذي تسمح به Gemini API أثناء التوليد، وليس سلسلة التفكير الخام.", input: { model: modelPolicy.models[0], thinkingLevel: modelPolicy.thinkingLevel, activeSkillIds }, output: { stage: "thinking" } });
     let lastThoughtUiEmitAt = 0;
     let lastThoughtUiSummary = "";
+    let lastAnswerUiEmitAt = 0;
+    let lastAnswerUiLength = 0;
     const result = await generate(prompt, preparedFiles.parts, request.signal, activeSkillIds, modelPolicy, toolPolicy, asksForServiceRoadmap(parsed.message), (summary, meta) => {
       // Thought summaries can arrive in tiny deltas. Throttle only the UI events, never the model
       // stream itself, so mobile clients do not re-render dozens of times per second. Retries are
@@ -1316,6 +1324,12 @@ ${logoAccess.context}`;
         input: { model: meta.model, thinkingLevel: modelPolicy.thinkingLevel, activeSkillIds },
         output: { stage: meta.retrying ? "retrying" : "thinking", attempt: meta.attempt },
       });
+    }, (answer, meta) => {
+      const now = Date.now();
+      if (now - lastAnswerUiEmitAt < 45 && answer.length - lastAnswerUiLength < 48) return;
+      lastAnswerUiEmitAt = now;
+      lastAnswerUiLength = answer.length;
+      emit?.({ type: "answer", content: answer, model: meta.model });
     });
     nodes.push({ id: "code", label: "Python sandbox", status: result.executableCode || result.codeExecutionResult ? "done" : "skipped", ms: 0, detail: result.executableCode ? "executed" : result.toolPolicy.codeExecutionEnabled ? "available · unused" : "disabled for this request" });
     const geminiRetryCount = result.requestAttempts.filter((attempt) => attempt.status === "retry").length;
@@ -1515,4 +1529,3 @@ export async function POST(request: Request) {
     },
   });
 }
-

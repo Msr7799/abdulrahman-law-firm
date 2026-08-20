@@ -84,7 +84,6 @@
 - Deep constitutional/administrative requests always receive one Flash-Lite claim-to-evidence verification pass. This catches cases where every sentence has a syntactically valid `[O#]` but the source is substantively about the wrong law/topic.
 - AML quality verification explicitly checks Decision 64/2017, Decree-Law 4/2001, constitutional/professional-confidentiality holdings, equality and forced-labour reasoning, and flags historical regulations presented as current law.
 
-
 ## Empty-response recovery (v21)
 
 إذا أنهى Gemini الجولة بـ `STOP` بعد إرسال ملخص التفكير ولكن بلا نص إجابة مرئي، لا يُعامل ذلك كفشل بحث أو كوتا. يقوم الوكيل بالآتي:

@@ -39,7 +39,9 @@ export function AdminDashboard({ locale, user, initialTab }: { locale: Locale; u
     const urlTab = url.searchParams.get("adminTab") as Tab | null;
     const savedTab = window.localStorage.getItem("law-admin-active-tab") as Tab | null;
     const restored = urlTab && validTabs.has(urlTab) ? urlTab : savedTab && validTabs.has(savedTab) ? savedTab : null;
-    if (restored && restored !== tab) setTab(restored);
+    if (!restored) return;
+    const frame = window.requestAnimationFrame(() => setTab((current) => current === restored ? current : restored));
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {

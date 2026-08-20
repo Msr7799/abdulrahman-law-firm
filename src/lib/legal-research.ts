@@ -391,7 +391,7 @@ export async function tavilyLegalSearch(args: { query: string; contextHint?: str
 
     const primaryData = await runSearch(body);
     let allResults = [...(primaryData.results ?? [])];
-    let allImages = [...(primaryData.images ?? [])];
+    const allImages = [...(primaryData.images ?? [])];
     let targetedRetryQuery = "";
     const expectedOfficialUrls = args.expectedOfficialUrls ?? [];
     const primaryHasExpected = allResults.some((item) => item.url && expectedOfficialUrls.some((expected) => sameEvidenceUrl(expected, item.url!)));

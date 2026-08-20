@@ -143,7 +143,6 @@ export async function searchBahrainLogoDirectory(text: string, limit = 12): Prom
 
   const scored = directory.map((logo) => {
     const name = normalizeSearchText(logo.name);
-    const category = normalizeSearchText(logo.category);
     let score = Math.max(aliasScore.get(name) ?? 0, aliasScore.get(logo.url) ?? 0);
     if (normalized.includes(name) && name.length >= 4) score = Math.max(score, 180 + Math.min(30, name.length / 2));
     for (const part of logo.name.split("·")) {

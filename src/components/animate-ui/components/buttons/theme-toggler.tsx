@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ComponentProps } from "react";
+import { useSyncExternalStore, type ComponentProps } from "react";
 import { Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { ThemeToggler, type ThemeDirection, type ThemeSelection, type ResolvedTheme } from "@/components/animate-ui/primitives/effects/theme-toggler";
@@ -12,11 +12,13 @@ type ThemeTogglerButtonProps = ComponentProps<"button"> & {
   onImmediateChange?: (theme: ThemeSelection) => void;
 };
 
+const subscribeToHydration = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
+
 export function ThemeTogglerButton({ modes = ["light", "dark"], direction = "ltr", onImmediateChange, onClick, className, ...props }: ThemeTogglerButtonProps) {
   const { theme, resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
+  const mounted = useSyncExternalStore(subscribeToHydration, getClientSnapshot, getServerSnapshot);
 
   // next-themes resolves localStorage only in the browser. Render a deterministic
   // placeholder on the server and during the first client pass so hydration is identical.

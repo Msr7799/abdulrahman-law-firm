@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import { onValue, push, ref, remove, set, update } from "firebase/database";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import Image from "next/image";
 import Papa from "papaparse";
 import { Archive, CalendarDays, Download, FilePlus2, Import, LoaderCircle, Pencil, Search, Trash2, X } from "lucide-react";
 import type { Locale } from "@/config/site";
@@ -31,7 +32,7 @@ function CaseLogoCluster({ item, ar }: { item: LawCase; ar: boolean }) {
           title={`${logo.role === "prosecution" ? (ar ? "النيابة العامة" : "Public Prosecution") : (ar ? "الجهة المرتبطة" : "Related entity")}: ${logo.name}`}
           className="grid h-11 min-w-12 place-items-center rounded-md border border-white/15 bg-white px-2 py-1 shadow-sm"
         >
-          <img src={logo.url} alt={logo.name} className={`${index === 0 ? "max-h-8 max-w-16" : "max-h-8 max-w-20"} object-contain`} />
+          <Image src={logo.url} alt={logo.name} width={80} height={32} unoptimized className={`${index === 0 ? "max-h-8 max-w-16" : "max-h-8 max-w-20"} h-auto w-auto object-contain`} />
         </div>
       ))}
     </div>

@@ -6,7 +6,7 @@ import Image from "next/image";
 import type { User } from "firebase/auth";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { onValue, ref, remove, set } from "firebase/database";
-import { Bot, Check, CheckCircle2, ChevronDown, CircleDashed, Copy, ExternalLink, FileText, Files, Globe2, History, ImageIcon, Landmark, LoaderCircle, Mic, MicOff, Newspaper, PanelLeftOpen, Paperclip, Pencil, RotateCcw, Search, Send, ShieldAlert, Sparkles, Square, TerminalSquare, Trash2, X } from "lucide-react";
+import { Bot, Check, CheckCircle2, ChevronDown, CircleDashed, Copy, ExternalLink, FileText, Files, Globe2, History, ImageIcon, Landmark, LoaderCircle, Mic, MicOff, Newspaper, PanelLeftOpen, Pencil, RotateCcw, Search, Send, ShieldAlert, Sparkles, Square, TerminalSquare, Trash2, X } from "lucide-react";
 import type { Locale } from "@/config/site";
 import { firestore, realtimeDatabase } from "@/lib/firebase/client";
 import type { AgentImage, AgentSource } from "@/types/admin";
@@ -14,6 +14,8 @@ import { MarkdownAnswer } from "@/components/admin/markdown-answer";
 import { agentSkills } from "@/data/agent-skills";
 import { cn } from "@/lib/utils";
 import { resolveCaseLogos } from "@/lib/bahrain-logo-match";
+import { ChatUiBurgerIcon, ChatUiChevronIcon, ChatUiNewIcon, ChatUiPaperclipIcon } from "@/components/icons/chat-ui-icons";
+import { typingChunkSize, useTypingEffect } from "@/hooks/use-typing-effect";
 
 type NodeResult = { id: string; label: string; status: "running" | "done" | "skipped" | "error"; ms: number; detail?: string };
 type CaseMatch = { id: string; caseNumber: string; caseYear: number; caseType: string; clientName: string; accusedName?: string; victimName?: string; court?: string; status?: string; judgment?: string; judgeName?: string; notes?: string; nextHearing?: string; score: number };
@@ -21,12 +23,36 @@ type ChatAttachment = { id: string; name: string; type: string; size: number; pr
 type PendingAttachment = ChatAttachment & { file: File };
 type GenerationInfo = { finishReason?: string; finishMessage?: string; outputTokens?: number; thoughtTokens?: number; thinkingBudget?: number; continuations?: number; truncated?: boolean };
 type DebugEvent = { id: string; kind: "thinking" | "tool" | "skill" | "validation" | "quota"; title: string; status: "running" | "done" | "skipped" | "error"; ms?: number; summary?: string; input?: unknown; output?: unknown };
-type AgentStreamEnvelope = { type: "node"; node: NodeResult } | { type: "debug"; event: DebugEvent } | { type: "final"; status: number; payload: any };
 type ChatMessage = { id: string; role: "user" | "assistant"; content: string; attachments?: ChatAttachment[]; model?: string; nodes?: NodeResult[]; debugEvents?: DebugEvent[]; code?: string; codeResult?: string; sources?: AgentSource[]; images?: AgentImage[]; caseMatches?: CaseMatch[]; generation?: GenerationInfo };
+type AgentResponseBody = {
+  ok?: boolean;
+  message?: string;
+  answer?: string;
+  model?: string;
+  nodes?: NodeResult[];
+  debugEvents?: DebugEvent[];
+  code?: string;
+  codeResult?: string;
+  sources?: AgentSource[];
+  images?: AgentImage[];
+  caseMatches?: CaseMatch[];
+  generation?: GenerationInfo;
+  retryAfter?: number;
+  error?: { httpStatus?: number; code?: string; providerMessage?: string; attempts?: unknown[] };
+};
+type AgentStreamEnvelope = { type: "node"; node: NodeResult } | { type: "debug"; event: DebugEvent } | { type: "answer"; content: string; model: string } | { type: "final"; status: number; payload: unknown };
 type StoredConversation = { id: string; title: string; createdAt: number; updatedAt: number; messages: ChatMessage[] };
 type SpeechResultEvent = { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> };
 type SpeechRecognitionLike = { lang: string; continuous: boolean; interimResults: boolean; start(): void; stop(): void; onresult: ((event: SpeechResultEvent) => void) | null; onerror: (() => void) | null; onend: (() => void) | null };
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+function asAgentResponseBody(value: unknown): AgentResponseBody {
+  return value && typeof value === "object" ? value as AgentResponseBody : {};
+}
+
+function timestamp() {
+  return Date.now();
+}
 
 function AgentCaseLogoCluster({ item, ar }: { item: CaseMatch; ar: boolean }) {
   const logos = resolveCaseLogos(item);
@@ -34,7 +60,7 @@ function AgentCaseLogoCluster({ item, ar }: { item: CaseMatch; ar: boolean }) {
     <span className="flex items-center gap-1">
       {logos.slice(0, 3).map((logo) => (
         <span key={logo.url} title={`${logo.role === "prosecution" ? (ar ? "النيابة العامة" : "Public Prosecution") : (ar ? "الجهة المرتبطة" : "Related entity")}: ${logo.name}`} className="grid h-8 min-w-9 place-items-center rounded-md border border-white/12 bg-white px-1.5 py-1 shadow-sm">
-          <img src={logo.url} alt={logo.name} className="max-h-6 max-w-11 object-contain" />
+          <Image src={logo.url} alt={logo.name} width={44} height={24} unoptimized className="h-auto w-auto max-h-6 max-w-11 object-contain" />
         </span>
       ))}
     </span>
@@ -295,10 +321,10 @@ function DebugTrace({ events, nodes, ar }: { events?: DebugEvent[]; nodes?: Node
             <span className="rounded-sm border border-white/8 bg-white/[.03] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-white/35">{label}</span>
             <strong className="min-w-0 flex-1 truncate font-medium text-white/70" dir="auto">{event.title}</strong>
             {typeof event.ms === "number" && event.ms > 0 && <span className="shrink-0 text-[9px] text-white/30">{event.ms}ms</span>}
-            <ChevronDown size={13} className="shrink-0 transition group-open:rotate-180" />
+            <ChatUiChevronIcon className="size-[13px] shrink-0 transition group-open:rotate-180" />
           </summary>
           <div className="border-t border-white/8 px-3 py-3 text-[11px] leading-5 text-white/55">
-            {event.summary && <p className="mb-3 whitespace-pre-wrap" dir="auto">{event.summary}</p>}
+            {event.summary && <TypingSummary text={event.summary} streaming={event.status === "running"} />}
             {event.input !== undefined && <div className="mb-3"><div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-white/30">INPUT</div><pre className="max-h-56 overflow-auto rounded-md border border-white/8 bg-black/20 p-2.5 text-[10px] leading-5 text-white/60" dir="ltr">{prettyDebugValue(event.input)}</pre></div>}
             {event.output !== undefined && <div><div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-white/30">OUTPUT</div><pre className="max-h-72 overflow-auto rounded-md border border-white/8 bg-black/20 p-2.5 text-[10px] leading-5 text-white/60" dir="ltr">{prettyDebugValue(event.output)}</pre></div>}
           </div>
@@ -312,14 +338,15 @@ function DebugTrace({ events, nodes, ar }: { events?: DebugEvent[]; nodes?: Node
   );
 }
 
-function NewChatIcon({ className = "" }: { className?: string }) {
-  return <svg xmlns="http://www.w3.org/2000/svg" className={className} width="1em" height="1em" fill="none" viewBox="0 0 16 16" aria-hidden="true"><path d="M7.258 1.856c.333 0 .66.024.979.07-.558.319-.972.86-1.123 1.503A5.254 5.254 0 1 0 9.32 13.513l.275-.127c.334-.17.712-.229 1.08-.17l.158.031.01.003 1.343.36-.359-1.345a1.77 1.77 0 0 1 .137-1.247 5.23 5.23 0 0 0 .538-2.041 2.356 2.356 0 0 0 1.544-1 6.808 6.808 0 0 1-.676 3.742v.001c-.034.066-.031.116-.025.14l.36 1.345a1.572 1.572 0 0 1-1.823 1.945l-.1-.024-1.334-.357a.2.2 0 0 0-.14.018l-.012.005A6.825 6.825 0 1 1 7.259 1.856Zm4.837-1.36c.434 0 .785.352.785.786v1.905h1.9a.785.785 0 0 1 0 1.57h-1.9v1.9a.786.786 0 1 1-1.57 0v-1.9H9.404a.785.785 0 0 1 0-1.57h1.906V1.282c0-.434.352-.787.785-.787Z" fill="currentColor" /></svg>;
+function TypingSummary({ text, streaming }: { text: string; streaming: boolean }) {
+  const { displayedText, isTyping } = useTypingEffect(text, { enabled: streaming, streaming, charactersPerSecond: 150 });
+  return <p className="mb-3 whitespace-pre-wrap" dir="auto">{displayedText}{isTyping && <span aria-hidden="true" className="ms-1 inline-block h-3 w-px animate-pulse bg-violet-300 align-middle" />}</p>;
 }
 
 type AgentButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { size?: "icon" | "default" };
 
-function AgentButton({ className, type = "button", size: _size, ...props }: AgentButtonProps) {
-  return <button type={type} className={cn("transition-all duration-200 ease-out active:scale-[0.985] disabled:cursor-not-allowed", className)} {...props} />;
+function AgentButton({ className, type = "button", size, ...props }: AgentButtonProps) {
+  return <button type={type} data-size={size} className={cn("transition-all duration-200 ease-out active:scale-[0.985] disabled:cursor-not-allowed", className)} {...props} />;
 }
 
 function MessageAttachments({ attachments, ar }: { attachments: ChatAttachment[]; ar: boolean }) {
@@ -348,7 +375,7 @@ function SearchImageCard({ image, featured, ar }: { image: AgentImage; featured:
 
 export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user: User; onOpenCases?: () => void }) {
   const ar = locale === "ar";
-  const welcomeMessage: ChatMessage = { id: "welcome", role: "assistant", content: ar ? "مرحباً. أستطيع البحث في القضايا والمصادر البحرينية الرسمية، وتحليل الصور وملفات PDF والملفات النصية. يمكنك أيضاً إملاء سؤالك صوتياً." : "Hello. I can search cases and official Bahrain sources, analyze images, PDFs and text files, and accept voice-dictated questions." };
+  const welcomeMessage = useMemo<ChatMessage>(() => ({ id: "welcome", role: "assistant", content: ar ? "مرحباً. أستطيع البحث في القضايا والمصادر البحرينية الرسمية، وتحليل الصور وملفات PDF والملفات النصية. يمكنك أيضاً إملاء سؤالك صوتياً." : "Hello. I can search cases and official Bahrain sources, analyze images, PDFs and text files, and accept voice-dictated questions." }), [ar]);
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
   const [input, setInput] = useState("");
   const [draftReady, setDraftReady] = useState(false);
@@ -368,6 +395,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
   const [copiedMessageId, setCopiedMessageId] = useState("");
   const [typingMessageId, setTypingMessageId] = useState("");
   const [typingLength, setTypingLength] = useState(0);
+  const [streamingMessageId, setStreamingMessageId] = useState("");
   const [stoppedTyping, setStoppedTyping] = useState<{ id: string; length: number } | null>(null);
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [historySidebarCollapsed, setHistorySidebarCollapsed] = useState(false);
@@ -429,8 +457,8 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
   }, [quickQuestionsOpen]);
 
   useEffect(() => {
-    if (cooldownUntil <= Date.now()) return;
-    const timer = window.setInterval(() => setClock(Date.now()), 500);
+    if (cooldownUntil <= timestamp()) return;
+    const timer = window.setInterval(() => setClock(timestamp()), 500);
     return () => window.clearInterval(timer);
   }, [cooldownUntil]);
 
@@ -438,24 +466,29 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     if (!typingMessageId) return;
     const message = messages.find((item) => item.id === typingMessageId && item.role === "assistant");
     if (!message) {
-      setTypingMessageId("");
-      setTypingLength(0);
-      return;
+      const frame = window.requestAnimationFrame(() => {
+        setTypingMessageId("");
+        setTypingLength(0);
+      });
+      return () => window.cancelAnimationFrame(frame);
     }
     if (typingLength >= message.content.length) {
-      setTypingMessageId("");
-      setTypingLength(0);
-      return;
+      if (streamingMessageId === typingMessageId) return;
+      const frame = window.requestAnimationFrame(() => {
+        setTypingMessageId("");
+        setTypingLength(0);
+      });
+      return () => window.cancelAnimationFrame(frame);
     }
 
     const remaining = message.content.length - typingLength;
-    const chunkSize = remaining > 2400 ? 14 : remaining > 1200 ? 10 : remaining > 500 ? 7 : 4;
-    const timer = window.setTimeout(() => {
+    const chunkSize = typingChunkSize(remaining, 180);
+    const frame = window.requestAnimationFrame(() => {
       setTypingLength((current) => Math.min(message.content.length, current + chunkSize));
-    }, 16);
+    });
 
-    return () => window.clearTimeout(timer);
-  }, [messages, typingLength, typingMessageId]);
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages, streamingMessageId, typingLength, typingMessageId]);
 
   useEffect(() => {
     if (!typingMessageId || typingLength === 0 || typingLength % 112 > 14) return;
@@ -478,9 +511,12 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
       window.localStorage.removeItem(`legal-agent-active-conversation:${user.uid}`);
       return;
     }
-    setConversationId(savedConversation.id);
-    setMessages(savedConversation.messages?.length ? savedConversation.messages : [welcomeMessage]);
-  }, [conversations, user.uid]);
+    const frame = window.requestAnimationFrame(() => {
+      setConversationId(savedConversation.id);
+      setMessages(savedConversation.messages?.length ? savedConversation.messages : [welcomeMessage]);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [conversations, user.uid, welcomeMessage]);
 
   useEffect(() => {
     const urls = Array.from(new Set(messages.flatMap((message) => message.images ?? []).filter((image) => !image.displayUrl && !imageHydrationRef.current.has(image.url)).map((image) => image.url)));
@@ -551,7 +587,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     attachments.forEach((item) => item.previewUrl && URL.revokeObjectURL(item.previewUrl));
     messages.flatMap((item) => item.attachments ?? []).forEach((item) => item.previewUrl && URL.revokeObjectURL(item.previewUrl));
     attachmentFilesRef.current.clear();
-    setAttachments([]); setConversationId(""); setMessages([welcomeMessage]); setInput(""); setEditingMessageId(""); setError(""); setTypingMessageId(""); setTypingLength(0); setStoppedTyping(null); setMobileToolsOpen(false);
+    setAttachments([]); setConversationId(""); setMessages([welcomeMessage]); setInput(""); setEditingMessageId(""); setError(""); setTypingMessageId(""); setTypingLength(0); setStreamingMessageId(""); setStoppedTyping(null); setMobileToolsOpen(false);
     window.localStorage.removeItem(`legal-agent-active-conversation:${user.uid}`);
     window.localStorage.setItem(`legal-agent-draft:${user.uid}`, "");
   }
@@ -561,7 +597,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     messages.flatMap((item) => item.attachments ?? []).forEach((item) => item.previewUrl && URL.revokeObjectURL(item.previewUrl));
     setAttachments([]);
     attachmentFilesRef.current.clear();
-    setConversationId(conversation.id); setMessages(conversation.messages?.length ? conversation.messages : [welcomeMessage]); setInput(""); setEditingMessageId(""); setError(""); setTypingMessageId(""); setTypingLength(0); setStoppedTyping(null); setMobileToolsOpen(false);
+    setConversationId(conversation.id); setMessages(conversation.messages?.length ? conversation.messages : [welcomeMessage]); setInput(""); setEditingMessageId(""); setError(""); setTypingMessageId(""); setTypingLength(0); setStreamingMessageId(""); setStoppedTyping(null); setMobileToolsOpen(false);
     window.localStorage.setItem(`legal-agent-active-conversation:${user.uid}`, conversation.id);
     window.localStorage.setItem(`legal-agent-draft:${user.uid}`, "");
   }
@@ -627,9 +663,13 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
 
   function stopGeneration() {
     if (typingMessageId) {
+      requestControllerRef.current?.abort();
+      requestControllerRef.current = null;
+      setBusy(false);
       setStoppedTyping({ id: typingMessageId, length: Math.max(1, typingLength) });
       setTypingMessageId("");
       setTypingLength(0);
+      setStreamingMessageId("");
       setError("");
       return;
     }
@@ -637,6 +677,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     requestControllerRef.current?.abort();
     requestControllerRef.current = null;
     setBusy(false);
+    setStreamingMessageId("");
     setError(ar ? "تم إيقاف توليد الإجابة." : "Answer generation stopped.");
   }
 
@@ -666,10 +707,11 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
         form.set("pastHistory", pastHistory);
       }
       const liveAssistantId = crypto.randomUUID();
-      let liveAssistant: ChatMessage = { id: liveAssistantId, role: "assistant", content: "", nodes: [], debugEvents: [] };
+      const liveAssistant: ChatMessage = { id: liveAssistantId, role: "assistant", content: "", nodes: [], debugEvents: [] };
       let streamedResponse = false;
+      let answerStreamStarted = false;
       let responseStatus = 0;
-      let body: any = {};
+      let body: AgentResponseBody = {};
 
       const response = await fetch("/api/admin/agent?stream=1", {
         method: "POST",
@@ -710,10 +752,25 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
             publishLive();
             return;
           }
+          if (packet.type === "answer") {
+            const continuesCurrentAnswer = packet.content.startsWith(liveAssistant.content);
+            liveAssistant.content = packet.content;
+            liveAssistant.model = packet.model;
+            if (!answerStreamStarted) {
+              answerStreamStarted = true;
+              setTypingLength(0);
+              setTypingMessageId(liveAssistantId);
+              setStreamingMessageId(liveAssistantId);
+            } else if (!continuesCurrentAnswer) {
+              setTypingLength(0);
+            }
+            publishLive();
+            return;
+          }
           if (packet.type === "final") {
             sawFinal = true;
             responseStatus = packet.status;
-            body = packet.payload ?? {};
+            body = asAgentResponseBody(packet.payload);
           }
         };
 
@@ -740,7 +797,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
         }
       } else {
         const responseText = await response.text();
-        try { body = responseText ? JSON.parse(responseText) : {}; }
+        try { body = asAgentResponseBody(responseText ? JSON.parse(responseText) : {}); }
         catch {
           body = {
             ok: false,
@@ -788,22 +845,21 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
         };
         const failedMessages = [...withUserMessage, failedAssistant];
         setMessages(failedMessages);
+        setStreamingMessageId("");
         if (body.retryAfter) {
           const retryMs = Number(body.retryAfter) * 1000;
-          if (Number.isFinite(retryMs) && retryMs > 0) setCooldownUntil(Date.now() + retryMs);
+          if (Number.isFinite(retryMs) && retryMs > 0) setCooldownUntil(timestamp() + retryMs);
         }
         setError(body.message || (ar ? "تعذر تشغيل الوكيل." : "Unable to run the agent."));
-        void saveConversation(nextConversationId, failedMessages, question, Date.now());
+        void saveConversation(nextConversationId, failedMessages, question, timestamp());
         return;
       }
-      const assistantMessage: ChatMessage = { id: streamedResponse ? liveAssistantId : crypto.randomUUID(), role: "assistant", content: body.answer, model: body.model, nodes: body.nodes ?? liveAssistant.nodes, debugEvents: body.debugEvents ?? liveAssistant.debugEvents, code: body.code, codeResult: body.codeResult, sources: body.sources, images: body.images, caseMatches: body.caseMatches, generation: body.generation };
+      const assistantMessage: ChatMessage = { id: streamedResponse ? liveAssistantId : crypto.randomUUID(), role: "assistant", content: body.answer ?? "", model: body.model, nodes: body.nodes ?? liveAssistant.nodes, debugEvents: body.debugEvents ?? liveAssistant.debugEvents, code: body.code, codeResult: body.codeResult, sources: body.sources, images: body.images, caseMatches: body.caseMatches, generation: body.generation };
       const completedMessages = [...withUserMessage, assistantMessage];
       setMessages(completedMessages);
       setBusy(false);
-      if (streamedResponse) {
-        setTypingLength(0);
-        setTypingMessageId("");
-      } else {
+      setStreamingMessageId("");
+      if (!answerStreamStarted) {
         setTypingLength(Math.min(8, assistantMessage.content.length));
         setTypingMessageId(assistantMessage.id);
       }
@@ -915,7 +971,7 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
       <div className="legal-agent-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#0c1c21]">
         <header className="legal-agent-topbar flex h-14 shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-[#0c1c21]/95 px-3 backdrop-blur sm:px-5">
           <div className="flex min-w-0 items-center gap-1.5">
-            <AgentButton type="button" onClick={() => setMobileHistoryOpen(true)} aria-label={ar ? "المحادثات السابقة" : "Chat history"} title={ar ? "المحادثات السابقة" : "Chat history"} className="focus-ring grid size-9 place-items-center rounded-lg text-white/60 hover:bg-white/5 hover:text-white xl:hidden"><PanelLeftOpen size={17} /></AgentButton>
+            <AgentButton type="button" onClick={() => setMobileHistoryOpen(true)} aria-label={ar ? "المحادثات السابقة" : "Chat history"} title={ar ? "المحادثات السابقة" : "Chat history"} className="focus-ring grid size-9 place-items-center rounded-lg text-white/60 hover:bg-white/5 hover:text-white xl:hidden"><ChatUiBurgerIcon className="size-[17px]" /></AgentButton>
             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white/[.04] text-[#d0ad69]"><Bot size={17} /></span>
             <div className="min-w-0">
               <h2 className="truncate text-[12px] font-bold text-white/85 sm:text-sm">{ar ? "الوكيل القانوني" : "Legal agent"}</h2>
@@ -924,7 +980,7 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <AgentButton type="button" onClick={() => setHistorySidebarCollapsed((current) => !current)} aria-label={historySidebarCollapsed ? (ar ? "إظهار القائمة الجانبية" : "Show sidebar") : (ar ? "طي القائمة الجانبية" : "Collapse sidebar")} title={historySidebarCollapsed ? (ar ? "إظهار القائمة الجانبية" : "Show sidebar") : (ar ? "طي القائمة الجانبية" : "Collapse sidebar")} className="focus-ring hidden size-9 place-items-center rounded-lg text-white/55 transition hover:bg-white/5 hover:text-white xl:grid"><PanelLeftOpen size={17} className={`transition-transform duration-300 ${historySidebarCollapsed ? "" : ar ? "" : ""}`} /></AgentButton>
-            <AgentButton onClick={() => { setMobileHistoryOpen(false); newConversation(); }} aria-label={ar ? "محادثة جديدة" : "New chat"} title={ar ? "محادثة جديدة" : "New chat"} className="focus-ring flex h-9 items-center gap-2 rounded-lg border border-white/10 px-2.5 text-[11px] font-bold text-white/65 hover:bg-white/5 hover:text-white"><NewChatIcon className="text-base" /><span className="hidden sm:inline">{ar ? "محادثة جديدة" : "New chat"}</span></AgentButton>
+            <AgentButton onClick={() => { setMobileHistoryOpen(false); newConversation(); }} aria-label={ar ? "محادثة جديدة" : "New chat"} title={ar ? "محادثة جديدة" : "New chat"} className="focus-ring flex h-9 items-center gap-2 rounded-lg border border-white/10 px-2.5 text-[11px] font-bold text-white/65 hover:bg-white/5 hover:text-white"><ChatUiNewIcon className="size-4" /><span className="hidden sm:inline">{ar ? "محادثة جديدة" : "New chat"}</span></AgentButton>
           </div>
         </header>
 
@@ -996,7 +1052,7 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
                     </AnimatePresence>
                   </div>
                 ) : editingMessageId === message.id ? (
-                  <form onSubmit={(event) => { event.preventDefault(); if (editValue.trim().length >= 1) void rerunUserMessage(message.id, Date.now(), editValue.trim()); }} className="w-full min-w-0 sm:w-[min(78vw,32rem)]">
+                  <form onSubmit={(event) => { event.preventDefault(); if (editValue.trim().length >= 1) void rerunUserMessage(message.id, timestamp(), editValue.trim()); }} className="w-full min-w-0 sm:w-[min(78vw,32rem)]">
                     <textarea autoFocus value={editValue} onChange={(event) => setEditValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEditingMessageId(""); if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} maxLength={4000} className="min-h-28 w-full resize-y rounded-xl border border-[#10191b]/25 bg-[#fffdf8] p-3 text-sm leading-7 outline-none focus:border-[#10191b]/60" />
                     <div className="mt-2 flex justify-end gap-2"><AgentButton type="button" onClick={() => setEditingMessageId("")} className="min-h-9 border border-[#10191b]/20 px-3 text-xs">{ar ? "إلغاء" : "Cancel"}</AgentButton><AgentButton disabled={responseActive || cooldown > 0 || !editValue.trim()} className="min-h-9 bg-[#10191b] px-4 text-xs font-bold text-white disabled:opacity-40">{ar ? "إرسال التعديل" : "Send edit"}</AgentButton></div>
                   </form>
@@ -1009,7 +1065,7 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
                 {answerSettled && message.sources && message.sources.length > 0 && <details className="mt-5 rounded-md border border-white/8 bg-white/[.02] p-3"><summary className="cursor-pointer text-xs font-bold text-[#d0ad69]">{ar ? `مصادر البحث (${message.sources.length})` : `Search sources (${message.sources.length})`}</summary><div className="mt-2 grid gap-2">{message.sources.map((source) => { const favicon = faviconUrl(source.url); return <a id={source.citationId ? `source-${message.id}-${source.citationId}` : undefined} key={`${source.citationId ?? "src"}-${source.url}`} href={source.url} target="_blank" rel="noreferrer noopener" className="focus-ring flex min-w-0 scroll-mt-24 items-start gap-2 rounded-md border border-white/8 p-3 text-xs text-white/65 hover:border-[#b89555]/40 hover:text-white">{source.citationId && <span className={`shrink-0 rounded-sm border px-1.5 py-0.5 text-[9px] font-bold ${source.sourceType === "official" ? "border-emerald-400/25 bg-emerald-400/8 text-emerald-300" : source.sourceType === "tavily" ? "border-violet-400/25 bg-violet-400/8 text-violet-300" : "border-sky-400/20 bg-sky-400/8 text-sky-300"}`}>[{source.citationId}]</span>}{favicon ? <Image src={favicon} alt="" width={16} height={16} unoptimized className="mt-0.5 size-4 shrink-0" /> : <ExternalLink className="mt-0.5 shrink-0" size={14} />}<span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]"><strong className="block font-medium">{source.title}</strong>{typeof source.score === "number" && <small className="mt-1 block text-[9px] opacity-45">relevance {source.score.toFixed(1)}</small>}</span><ExternalLink className="ms-auto mt-0.5 shrink-0 opacity-40" size={12} /></a>; })}</div></details>}
                 {answerSettled && message.images && message.images.length > 0 && <details className="mt-5 border border-white/8 bg-white/[.02] p-3"><summary className="flex cursor-pointer items-center gap-2 text-xs font-bold text-[#d0ad69]"><ImageIcon size={14} />{ar ? `صور من نتائج البحث (${message.images.length})` : `Images from search (${message.images.length})`}</summary><div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">{message.images.map((image, index) => <SearchImageCard key={image.url} image={image} featured={index === 0 && message.images!.length > 2} ar={ar} />)}</div></details>}
                 {answerSettled && message.model && <p className="mt-4 text-[10px] text-white/25" dir="ltr">{message.model}</p>}
-                {answerSettled && message.role === "assistant" && message.id !== "welcome" && <div className="mt-3 flex items-center justify-end gap-1 border-t border-white/8 pt-2"><AgentButton type="button" onClick={() => void copyAnswer(message)} title={ar ? "نسخ الرد الكامل مع الديباق والمصادر" : "Copy full response with debug and sources"} aria-label={ar ? "نسخ الرد الكامل مع الديباق والمصادر" : "Copy full response with debug and sources"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white">{copiedMessageId === message.id ? <Check className="text-emerald-300" size={16} /> : <Copy size={16} />}</AgentButton><AgentButton type="button" disabled={responseActive || cooldown > 0} onClick={() => retryAssistant(message.id, Date.now())} title={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} aria-label={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white disabled:opacity-30"><RotateCcw size={16} /></AgentButton></div>}
+                {answerSettled && message.role === "assistant" && message.id !== "welcome" && <div className="mt-3 flex items-center justify-end gap-1 border-t border-white/8 pt-2"><AgentButton type="button" onClick={() => void copyAnswer(message)} title={ar ? "نسخ الرد الكامل مع الديباق والمصادر" : "Copy full response with debug and sources"} aria-label={ar ? "نسخ الرد الكامل مع الديباق والمصادر" : "Copy full response with debug and sources"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white">{copiedMessageId === message.id ? <Check className="text-emerald-300" size={16} /> : <Copy size={16} />}</AgentButton><AgentButton type="button" disabled={responseActive || cooldown > 0} onClick={() => retryAssistant(message.id, timestamp())} title={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} aria-label={ar ? "إعادة توليد الإجابة" : "Regenerate answer"} className="focus-ring grid size-9 place-items-center rounded-md text-white/40 hover:bg-white/5 hover:text-white disabled:opacity-30"><RotateCcw size={16} /></AgentButton></div>}
               </article>
               );
             })}
@@ -1029,7 +1085,7 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
           )}
         </div>
 
-        <form onSubmit={(event) => { event.preventDefault(); setMobileToolsOpen(false); void sendQuestion(input, Date.now()); }} className="legal-agent-composer relative shrink-0 border-t border-white/8 bg-[#0c1c21]/98 px-2.5 pb-[max(.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur sm:px-5 sm:pb-4">
+        <form onSubmit={(event) => { event.preventDefault(); setMobileToolsOpen(false); void sendQuestion(input, timestamp()); }} className="legal-agent-composer relative shrink-0 border-t border-white/8 bg-[#0c1c21]/98 px-2.5 pb-[max(.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur sm:px-5 sm:pb-4">
           {mobileToolsOpen && (
             <div className="mb-2 rounded-2xl border border-white/10 bg-[#101d21] p-2 shadow-2xl xl:hidden">
               {recentPrompts.length > 0 && <details className="group rounded-xl border border-white/8 bg-black/10"><summary className="focus-ring flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 text-xs text-white/65"><span className="flex items-center gap-2"><History size={14} />{ar ? `آخر البرومبتات (${recentPrompts.length}/20)` : `Recent prompts (${recentPrompts.length}/20)`}</span><ChevronDown className="transition group-open:rotate-180" size={14} /></summary><div className="max-h-40 overflow-y-auto border-t border-white/8 p-1">{recentPrompts.map((prompt, index) => <AgentButton key={`${prompt}-${index}`} type="button" onClick={() => { setInput(prompt); setMobileToolsOpen(false); }} className="focus-ring block min-h-10 w-full truncate rounded-lg px-3 text-start text-[11px] text-white/55 hover:bg-white/5 hover:text-white" title={prompt}>{prompt}</AgentButton>)}</div></details>}
@@ -1052,7 +1108,7 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
               <AnimatePresence initial={false}>
                 {quickQuestionsOpen && <motion.div initial={{ height: 0, opacity: 0, y: -6 }} animate={{ height: "auto", opacity: 1, y: 0 }} exit={{ height: 0, opacity: 0, y: -6 }} transition={{ duration: 0.28, ease: "easeOut" }} className="overflow-hidden">
                   <div className="grid grid-cols-2 gap-1.5 pb-1 sm:grid-cols-3 sm:gap-2">
-                    {quickQuestions[ar ? "ar" : "en"].map((item, itemIndex) => { const Icon = item.icon; return <motion.div key={item.label} initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: itemIndex * 0.035, duration: 0.2 }}><AgentButton type="button" disabled={responseActive || cooldown > 0} onClick={() => { setQuickQuestionsOpen(false); void sendQuestion(item.question, Date.now()); }} title={item.question} className="focus-ring flex min-h-10 w-full min-w-0 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[.025] px-2.5 py-1.5 text-[9px] font-bold leading-none text-white/60 transition hover:border-[#b89555]/35 hover:bg-white/[.05] hover:text-white disabled:opacity-40 sm:min-h-11 sm:px-3 sm:text-[10px]"><Icon className="size-3 shrink-0 text-[#d0ad69] sm:size-[13px]" /><span className="whitespace-nowrap text-center">{item.label}</span></AgentButton></motion.div>; })}
+                    {quickQuestions[ar ? "ar" : "en"].map((item, itemIndex) => { const Icon = item.icon; return <motion.div key={item.label} initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: itemIndex * 0.035, duration: 0.2 }}><AgentButton type="button" disabled={responseActive || cooldown > 0} onClick={() => { setQuickQuestionsOpen(false); void sendQuestion(item.question, timestamp()); }} title={item.question} className="focus-ring flex min-h-10 w-full min-w-0 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[.025] px-2.5 py-1.5 text-[9px] font-bold leading-none text-white/60 transition hover:border-[#b89555]/35 hover:bg-white/[.05] hover:text-white disabled:opacity-40 sm:min-h-11 sm:px-3 sm:text-[10px]"><Icon className="size-3 shrink-0 text-[#d0ad69] sm:size-[13px]" /><span className="whitespace-nowrap text-center">{item.label}</span></AgentButton></motion.div>; })}
                   </div>
                 </motion.div>}
               </AnimatePresence>
@@ -1073,7 +1129,7 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
             <div className="flex items-center justify-between gap-1 px-1 pb-0.5">
               <div className="flex min-w-0 items-center gap-0.5">
                 <input ref={fileInputRef} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,application/json,.txt,.md,.csv,.json,.pdf" onChange={(event) => addAttachments(event.target.files)} className="hidden" />
-                <AgentButton type="button" size="icon" disabled={responseActive || attachments.length >= maxFiles} onClick={() => fileInputRef.current?.click()} aria-label={ar ? "إرفاق صور أو ملفات" : "Attach images or files"} title={ar ? "صور، PDF وملفات نصية — حتى 200MB قبل المعالجة" : "Images, PDF and text — up to 200MB before processing"} className="focus-ring grid size-10 place-items-center rounded-full text-white/55 hover:bg-white/5 hover:text-white disabled:opacity-30"><Paperclip size={18} /></AgentButton>
+                <AgentButton type="button" size="icon" disabled={responseActive || attachments.length >= maxFiles} onClick={() => fileInputRef.current?.click()} aria-label={ar ? "إرفاق صور أو ملفات" : "Attach images or files"} title={ar ? "صور، PDF وملفات نصية — حتى 200MB قبل المعالجة" : "Images, PDF and text — up to 200MB before processing"} className="focus-ring grid size-10 place-items-center rounded-full text-white/55 hover:bg-white/5 hover:text-white disabled:opacity-30"><ChatUiPaperclipIcon className="size-[18px]" /></AgentButton>
                 <AgentButton type="button" size="icon" disabled={responseActive} onClick={() => void toggleVoice()} aria-label={listening ? (ar ? "إيقاف التسجيل" : "Stop recording") : (ar ? "إملاء صوتي" : "Voice dictation")} title={ar ? "الإملاء الصوتي" : "Voice dictation"} className={`focus-ring grid size-10 place-items-center rounded-full transition ${listening ? "bg-red-500/15 text-red-300" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>{listening ? <MicOff className="animate-pulse" size={18} /> : <Mic size={18} />}</AgentButton>
                 <AgentButton type="button" onClick={() => setMobileToolsOpen((current) => !current)} aria-expanded={mobileToolsOpen} aria-label={ar ? "أدوات إضافية" : "More tools"} className={`focus-ring grid size-10 place-items-center rounded-full xl:hidden ${mobileToolsOpen ? "bg-white/10 text-white" : "text-white/55 hover:bg-white/5 hover:text-white"}`}><Sparkles size={17} /></AgentButton>
                 <label className="hidden cursor-pointer items-center gap-2 rounded-full border border-white/10 px-3 py-2 text-[11px] text-white/55 xl:flex"><input type="checkbox" checked={webSearch} onChange={(event) => setWebSearch(event.target.checked)} className="size-3.5 shrink-0" /><Globe2 size={13} />{ar ? "Tavily" : "Tavily"}</label>
