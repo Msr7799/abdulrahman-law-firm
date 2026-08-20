@@ -104,8 +104,8 @@ export function selectGeminiModelPolicy(input: {
   const settings: Record<GeminiWorkload, Pick<GeminiModelPolicy, "thinkingLevel" | "maxOutputTokens" | "maxContinuations" | "maxGeminiCalls">> = {
     micro: { thinkingLevel: "minimal", maxOutputTokens: 3072, maxContinuations: 0, maxGeminiCalls: 1 },
     standard: { thinkingLevel: "low", maxOutputTokens: 6144, maxContinuations: 0, maxGeminiCalls: allowPreflight ? 2 : 1 },
-    complex: { thinkingLevel: "medium", maxOutputTokens: 8192, maxContinuations: 1, maxGeminiCalls: allowPreflight ? 3 : 2 },
-    deep: { thinkingLevel: "high", maxOutputTokens: 12288, maxContinuations: 1, maxGeminiCalls: allowPreflight ? 3 : 2 },
+    complex: { thinkingLevel: "medium", maxOutputTokens: 8192, maxContinuations: 1, maxGeminiCalls: allowPreflight ? 4 : 3 },
+    deep: { thinkingLevel: "high", maxOutputTokens: 12288, maxContinuations: 1, maxGeminiCalls: allowPreflight ? 4 : 3 },
   };
 
   return {

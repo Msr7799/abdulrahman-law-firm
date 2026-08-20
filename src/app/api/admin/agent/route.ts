@@ -1,7 +1,6 @@
 import { GoogleGenAI, type Part } from "@google/genai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { rankCases } from "@/lib/case-search";
 import { bearerToken, verifyFirebaseAdminToken } from "@/lib/firebase/server-auth";
 import type { AgentImage, AgentSource, LawCase } from "@/types/admin";
 import { roadmapKnowledgeForAgent } from "@/data/judicial-roadmap";
@@ -15,6 +14,8 @@ import { compressPdfForAi, type PdfCompressionReport } from "@/lib/pdf-compresso
 import { evidenceContext, extractOfficialUrls, fetchOfficialEvidence, researchPlanSummary, selectLegalSkillIds, tavilyLegalSearch, validateEvidenceCitations, type ResearchDebugEvent, type ResearchEvidence } from "@/lib/legal-research";
 import { diagnoseGeminiError, GeminiRequestError, runGeminiRequest, type GeminiAttemptTrace } from "@/lib/gemini-request-manager";
 import { selectGeminiModelPolicy, type GeminiModelPolicy } from "@/lib/gemini-model-policy";
+import { rankCasesHybrid, type HybridCaseMatch } from "@/lib/case-embedding-rag";
+import { maybeRunSemanticQualityGate, qualityWarning, runDeterministicQualityGate } from "@/lib/legal-quality-gate";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -318,11 +319,12 @@ async function getCases(idToken: string): Promise<LawCase[]> {
   return data ? Object.entries(data).map(([id, item]) => ({ id, ...item })) : [];
 }
 
-function caseContext(ranked: ReturnType<typeof rankCases>) {
+function caseContext(ranked: HybridCaseMatch[]) {
   return ranked.map((item, index) => {
     const lawCase = item.lawCase;
     const score = item.score.toFixed(1);
-    return `[C${index + 1}] relevance=${score}\nCase: ${lawCase.caseNumber}/${lawCase.caseYear}\nType: ${lawCase.caseType}\nClient: ${lawCase.clientName}\nAccused/opponent: ${lawCase.accusedName || "-"}\nVictim: ${lawCase.victimName || "-"}\nCourt: ${lawCase.court}\nStatus: ${lawCase.status}\nJudgment: ${lawCase.judgment || "-"}\nJudge/panel: ${lawCase.judgeName || "-"}\nNext hearing: ${lawCase.nextHearing || "-"}\nNotes: ${lawCase.notes || "-"}`;
+    const retrieval = item.retrievalMode === "hybrid" ? `hybrid semantic=${item.semanticScore.toFixed(4)} lexical=${item.lexicalScore.toFixed(2)}` : "lexical fallback";
+    return `[C${index + 1}] relevance=${score} retrieval=${retrieval}\nCase: ${lawCase.caseNumber}/${lawCase.caseYear}\nType: ${lawCase.caseType}\nClient: ${lawCase.clientName}\nAccused/opponent: ${lawCase.accusedName || "-"}\nVictim: ${lawCase.victimName || "-"}\nCourt: ${lawCase.court}\nStatus: ${lawCase.status}\nJudgment: ${lawCase.judgment || "-"}\nJudge/panel: ${lawCase.judgeName || "-"}\nNext hearing: ${lawCase.nextHearing || "-"}\nNotes: ${lawCase.notes || "-"}`;
   }).join("\n\n");
 }
 
@@ -426,6 +428,9 @@ Rules:
 
 ACTIVE LEGAL SKILLS:
 ${agentSkillsForPrompt(activeSkillIds)}
+
+22. For every material legal proposition (article number, legal rule, court holding, deadline, jurisdiction, constitutional effect), place an allowed evidence citation [O#]/[W#]/[C#] in the same paragraph whenever supporting evidence is supplied. Never cite a source that does not support that proposition.
+23. If official evidence exists, use at least one [O#] citation in the answer and prefer it over secondary sources.
 
 SERVICE ROADMAP REFERENCE:
 ${roadmapKnowledgeForAgent()}`;
@@ -587,10 +592,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: attachmentError.message, nodes }, { status: attachmentError.status });
   }
 
+  const debugEvents: ResearchDebugEvent[] = [];
+
   started = Date.now();
   const cases = await getCases(idToken);
-  const ranked = rankCases(cases, parsed.message, 6);
-  nodes.push({ id: "rag", label: "Case RAG", status: "done", ms: Date.now() - started, detail: `${ranked.length}/${cases.length}` });
+  const hybridRag = await rankCasesHybrid(cases, parsed.message, request.signal, 6);
+  const ranked = hybridRag.ranked;
+  nodes.push({ id: "rag", label: "Case RAG · Gemini Embeddings", status: cases.length ? "done" : "skipped", ms: Date.now() - started, detail: `${ranked.length}/${cases.length} · ${hybridRag.debug.model}${hybridRag.debug.fallback ? " · lexical fallback" : ""}` });
+  debugEvents.push({
+    id: "case-embedding-rag",
+    kind: "tool",
+    title: "case_embedding_rag",
+    status: hybridRag.debug.fallback ? "skipped" : "done",
+    ms: hybridRag.debug.elapsedMs,
+    summary: hybridRag.debug.fallback
+      ? "تعذر الترتيب الدلالي بالـ embeddings، فاستمر الوكيل تلقائياً بالبحث النصي حتى لا يتوقف الطلب."
+      : `تم ترتيب القضايا هجينيًا: تشابه دلالي عبر ${hybridRag.debug.model} + مطابقة نصية، باستدعاء Embedding واحد فقط.`,
+    input: { query: parsed.message, totalCases: cases.length, candidates: hybridRag.debug.candidates, dimensions: hybridRag.debug.dimensions },
+    output: hybridRag.debug,
+  });
 
   // Always give the agent the same Bahrain-news knowledge that powers the site.
   // The first list is strict "today" in Bahrain time; the second mirrors the homepage carousel exactly.
@@ -603,8 +623,6 @@ export async function POST(request: Request) {
   } catch {
     nodes.push({ id: "site-news", label: "Site news · Bahrain today", status: "error", ms: Date.now() - started });
   }
-
-  const debugEvents: ResearchDebugEvent[] = [];
 
   // Node 1: recover exact official URLs without an LLM whenever possible.
   started = Date.now();
@@ -728,7 +746,7 @@ export async function POST(request: Request) {
     kind: "quota",
     title: "Gemini pacing & retry guard",
     status: "done",
-    summary: `لا يتم إطلاق استدعاءات Gemini بشكل متتابع فورياً. Flash محجوز بفاصل افتراضي 7 ثوانٍ بين بدايات الطلبات، وFlash-Lite بفاصل 4.5 ثانية، مع تراجع أُسّي + jitter على 429/408/5xx. عقدة التوجيه اختيارية وإذا فشلت يستمر المسار الحتمي.`,
+    summary: `لا يتم إطلاق استدعاءات Gemini بشكل متتابع فورياً. Flash وFlash-Lite يمران عبر بوابة pacing/backoff. Case RAG يستخدم Embedding call مستقلاً واحداً فقط، وQuality verifier لا يعمل إلا عند فشل grounding بشكل شديد في طلب complex/deep.`,
     input: {
       userQuestionCooldownSeconds: cooldownMs / 1000,
       dailyOfficeQuestionLimit: dailyLimit,
@@ -743,8 +761,13 @@ export async function POST(request: Request) {
       preflightMaxAttempts: Number(process.env.GEMINI_PREFLIGHT_MAX_ATTEMPTS ?? 3),
       finalMaxAttempts: Number(process.env.GEMINI_FINAL_MAX_ATTEMPTS ?? 4),
       maxContinuations: Number(process.env.GEMINI_MAX_CONTINUATIONS ?? 1),
+      embeddingModel: process.env.GEMINI_EMBEDDING_MODEL ?? "gemini-embedding-2",
+      embeddingCallsThisRequest: hybridRag.debug.embeddingCalls,
+      embeddingMinIntervalMs: Number(process.env.GEMINI_EMBEDDING_MIN_INTERVAL_MS ?? 1200),
+      qualitySemanticVerifier: process.env.LEGAL_QUALITY_SEMANTIC_VERIFY ?? "true",
+      qualityModel: process.env.GEMINI_QUALITY_MODEL ?? "gemini-3.5-flash-lite",
     },
-    output: { policy: "Free-tier role routing: Lite for routing/light tasks, Flash for normal legal work, 3.6 Flash only for deep/complex work. Transient 429/5xx retries stay on the same model; only 404 or hard daily quota may use the next free fallback. Gemini Pro is never selected." },
+    output: { policy: "Free-tier role routing: Embedding 2 for vector retrieval, Lite for routing/conditional QA verification, Flash for normal legal work, 3.6 Flash only for deep/complex work. 429/5xx retries remain on the same model; 404 or hard daily quota may use the configured free fallback. Gemini Pro is never selected." },
   });
 
   started = Date.now();
@@ -864,6 +887,7 @@ ${logoAccess.context}`;
     });
 
     const allResearchEvidence = [...officialEvidence, ...supplementalTavilyEvidence];
+    const deterministicQuality = runDeterministicQualityGate(result.text, allResearchEvidence);
     const citationCheck = validateEvidenceCitations(result.text, allResearchEvidence);
     const citationStatus = allResearchEvidence.length && !citationCheck.hasGrounding ? "error" : citationCheck.invalid.length || citationCheck.unapprovedUrls.length ? "error" : "done";
     nodes.push({ id: "citations", label: "Citation validation", status: citationStatus, ms: 0, detail: `${citationCheck.validFound.length}/${allResearchEvidence.length}` });
@@ -877,9 +901,35 @@ ${logoAccess.context}`;
       output: citationCheck,
     });
 
+    const qualityStarted = Date.now();
+    const semanticQuality = await maybeRunSemanticQualityGate({
+      question: parsed.message,
+      answer: result.text,
+      evidence: allResearchEvidence,
+      deterministic: deterministicQuality,
+      policy: modelPolicy,
+      signal: request.signal,
+    });
+    const qualityFailed = !deterministicQuality.pass || (semanticQuality.ran && semanticQuality.pass === false);
+    const qualityStatus = qualityFailed ? "error" : "done";
+    nodes.push({ id: "quality", label: "Legal quality gate", status: qualityStatus, ms: Date.now() - qualityStarted, detail: `${deterministicQuality.score}/100${semanticQuality.ran ? ` · ${semanticQuality.model ?? "semantic verifier"}` : " · deterministic"}` });
+    debugEvents.push({
+      id: "legal-quality-gate",
+      kind: "validation",
+      title: "legal_quality_gate",
+      status: qualityStatus,
+      ms: Date.now() - qualityStarted,
+      summary: qualityFailed
+        ? "بوابة الجودة رصدت نقاطاً تحتاج مراجعة قبل الاعتماد. لم يتم إسقاط الطلب، وتظهر تفاصيل الفشل داخل هذا الـFold."
+        : "اجتازت الإجابة بوابة الإسناد والمصادر قبل إرجاعها للمستخدم.",
+      input: { workload: modelPolicy.workload, evidenceCount: allResearchEvidence.length, semanticVerifierRunsOnlyWhenNeeded: true },
+      output: { deterministic: deterministicQuality, semantic: semanticQuality },
+    });
+
+    const finalAnswer = `${result.text}${qualityWarning(deterministicQuality, semanticQuality)}`;
     const researchSources: AgentSource[] = allResearchEvidence.map(({ citationId, sourceType, title, url, snippet, score }) => ({ citationId, sourceType, title, url, snippet, score }));
     const newsSources = curatedNewsSources.length ? curatedNewsSources : isLegalNewsQuery(parsed.message) ? legalNewsForAgent([...todayNews, ...homepageNews]).sources.map((source, index) => ({ ...source, citationId: `N${index + 1}`, sourceType: "news" as const })) : [];
-    return NextResponse.json({ ok: true, answer: result.text, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated, workload: modelPolicy.workload, modelChain: modelPolicy.models, thinkingLevel: modelPolicy.thinkingLevel }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
+    return NextResponse.json({ ok: true, answer: finalAnswer, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, quality: { deterministic: deterministicQuality, semantic: semanticQuality }, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated, workload: modelPolicy.workload, modelChain: modelPolicy.models, thinkingLevel: modelPolicy.thinkingLevel }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : "AI_ERROR";
     const diagnosed = rawMessage === "GEMINI_API_KEY_MISSING"
