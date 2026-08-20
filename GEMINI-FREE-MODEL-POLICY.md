@@ -50,3 +50,17 @@
 - URL citation validation canonicalizes Markdown backticks, `www`, trailing punctuation and harmless slash differences before comparing against allowed evidence.
 - Legal QA now separates hard failures from soft citation-format warnings and performs claim-to-evidence verification for unsupported or contradicted legal conclusions. A semantic pass can downgrade formatting-only issues to `PASS WITH NOTES`, but cannot override a real contradiction or invalid source.
 - The final legal model is instructed not to label the entire analysis as `100%` / `قطعية`; verified court disposition and analytical confidence are stated separately.
+
+## v18 — Live agent trace + blocked SJC recovery
+
+- The admin agent endpoint supports `application/x-ndjson` progress streaming. The client creates the assistant card immediately and receives node/debug updates while retrieval and Gemini generation are still running.
+- Gemini final generation uses `generateContentStream`; only provider-returned **thought summaries** are exposed live. Raw/private chain-of-thought is never required or displayed.
+- Live thought-summary UI updates are throttled to roughly 220ms / meaningful text growth to avoid excessive React renders while preserving the actual provider stream.
+- Recoverable/optional nodes use `SKIPPED` (rendered green) instead of `ERROR`. Red is reserved for a real final failure, invalid evidence, contradiction, or other condition that should block legal reliance.
+- `ahkam.sjc.bh` may refuse direct server fetches. If Tavily retrieves the exact same canonical official judgment URL embedded in the attachment, that result is promoted to `[O#]` with an explicit `recoveredVia=tavily-official-url-fallback` debug record.
+- Canonical URL comparison sorts query parameters, so `?i=...&p=1` and `?p=1&i=...` are treated as the same SJC judgment.
+- After exact SJC recovery, the agent does not re-fetch the same blocked page in `official_source_followup`; this removes the redundant ~30-second wait seen in CASE-03.
+- Generic SJC/authority homepages are suppressed when an exact judgment page is already found.
+- The final prompt receives only distinct supplemental Tavily evidence; an exact result promoted to `[O#]` is not simultaneously exposed to Gemini as the old `[W1]` citation.
+- Model policy is re-evaluated after retrieval. If the exact governing judgment is available and the user did not request open-ended deep research, the final turn can step down from 3.6/high to 3.5/medium while preserving the stronger model for genuinely unresolved deep tasks.
+- Historical-law verification explicitly distinguishes the rule actually in force on the case date from a later replacement/corresponding statute, and arbitration QA checks the difference between a non-grievable enforcement grant order and an appealable refusal judgment.

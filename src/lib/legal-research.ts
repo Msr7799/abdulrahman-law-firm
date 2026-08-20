@@ -7,7 +7,7 @@ export type ResearchDebugEvent = {
   id: string;
   kind: "thinking" | "tool" | "skill" | "validation" | "quota";
   title: string;
-  status: "done" | "skipped" | "error";
+  status: "running" | "done" | "skipped" | "error";
   ms?: number;
   summary?: string;
   input?: unknown;
@@ -32,7 +32,7 @@ function stripTrailingPunctuation(value: string) {
   return value.replace(/[`)\]>\]}.,;:'"،؛؟]+$/g, "");
 }
 
-function canonicalUrl(value: string) {
+export function canonicalEvidenceUrl(value: string) {
   try {
     const cleaned = stripTrailingPunctuation(value.trim().replace(/^[`(<\[{]+/g, ""));
     const url = new URL(cleaned.replace(/\\:/g, ":").replace(/&amp;/gi, "&"));
@@ -41,10 +41,21 @@ function canonicalUrl(value: string) {
     url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
     if ((url.protocol === "https:" && url.port === "443") || (url.protocol === "http:" && url.port === "80")) url.port = "";
     if (url.pathname !== "/") url.pathname = url.pathname.replace(/\/+$/, "");
+    // Query-string order is not semantically meaningful. SJC links often arrive as
+    // ?i=...&p=1 from the PDF and ?p=1&i=... from Tavily, so sort keys before comparing.
+    const sorted = [...url.searchParams.entries()].sort(([ak, av], [bk, bv]) => ak.localeCompare(bk) || av.localeCompare(bv));
+    url.search = "";
+    for (const [key, value] of sorted) url.searchParams.append(key, value);
     return url.toString();
   } catch {
     return "";
   }
+}
+
+export function sameEvidenceUrl(left: string, right: string) {
+  const a = canonicalEvidenceUrl(left);
+  const b = canonicalEvidenceUrl(right);
+  return Boolean(a && b && a === b);
 }
 
 export function isOfficialBahrainUrl(value: string) {
@@ -59,7 +70,7 @@ export function isOfficialBahrainUrl(value: string) {
 function urlsFromRawText(raw: string) {
   const decoded = raw.replace(/\\\(([^)]*)\\\)/g, "$1").replace(/\\:/g, ":").replace(/&amp;/gi, "&");
   const matches = decoded.match(/https?:\/\/[^\s<>"'`{}\[\]]+/gi) ?? [];
-  return matches.map((item) => canonicalUrl(stripTrailingPunctuation(item))).filter(Boolean);
+  return matches.map((item) => canonicalEvidenceUrl(stripTrailingPunctuation(item))).filter(Boolean);
 }
 
 export async function extractOfficialUrls(message: string, files: File[]) {
@@ -141,7 +152,7 @@ function extractOfficialLinks(html: string, baseUrl: string) {
   let match: RegExpExecArray | null;
   while ((match = regex.exec(html))) {
     try {
-      const url = canonicalUrl(new URL(match[1], baseUrl).toString());
+      const url = canonicalEvidenceUrl(new URL(match[1], baseUrl).toString());
       if (!url || !isOfficialBahrainUrl(url)) continue;
       const anchor = decodeEntities(match[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
       links.push({ url, anchor });
@@ -179,9 +190,9 @@ export async function fetchOfficialEvidence(urls: string[], researchText: string
         redirect: "follow",
         cache: "no-store",
         headers: { accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.4", "user-agent": "Abdulrahman-Law-Office-Agent/1.0" },
-        signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(/ahkam\.sjc\.bh/i.test(originalUrl) ? 5_000 : 12_000)]),
       });
-      const finalUrl = canonicalUrl(response.url || originalUrl);
+      const finalUrl = canonicalEvidenceUrl(response.url || originalUrl);
       if (!response.ok || !isOfficialBahrainUrl(finalUrl)) throw new Error(`HTTP ${response.status}`);
       const contentType = response.headers.get("content-type") ?? "";
       if (!/text\/(html|plain)|application\/xhtml\+xml/i.test(contentType)) {
@@ -220,7 +231,7 @@ export async function fetchOfficialEvidence(urls: string[], researchText: string
       const title = htmlTitle(html, item.anchor || item.url);
       const text = htmlToText(html);
       const content = relevantWindows(text, [...terms, ...queryTerms(title)], 14_000);
-      evidence.push({ citationId: "", sourceType: "official", title, url: canonicalUrl(response.url || item.url), snippet: content.slice(0, 700), content, score: 90 + item.score });
+      evidence.push({ citationId: "", sourceType: "official", title, url: canonicalEvidenceUrl(response.url || item.url), snippet: content.slice(0, 700), content, score: 90 + item.score });
     } catch {
       // Linked evidence is optional.
     }
@@ -233,9 +244,9 @@ export async function fetchOfficialEvidence(urls: string[], researchText: string
       id: "official-fetch",
       kind: "tool",
       title: "official_source_fetch",
-      status: deduped.length ? "done" : "error",
+      status: deduped.length ? "done" : "skipped",
       ms: Date.now() - started,
-      summary: deduped.length ? `تم جلب ${deduped.length} مصدر بحريني رسمي مباشرة قبل البحث العام.` : "تعذر جلب المصدر الرسمي المباشر.",
+      summary: deduped.length ? `تم جلب ${deduped.length} مصدر بحريني رسمي مباشرة قبل البحث العام.` : "المصدر الرسمي لم يسمح بالجلب المباشر من الخادم؛ سيستخدم الوكيل البحث المقيّد لاستعادة نفس الصفحة الرسمية قبل اعتبار ذلك فشلاً.",
       input,
       output: {
         fetched: deduped.map((item) => ({ citationId: item.citationId, title: item.title, url: item.url, chars: item.content?.length ?? 0 })),
@@ -276,6 +287,14 @@ function sourceRelevance(title: string, url: string, snippet: string, terms: str
   return { score, hits };
 }
 
+function cleanSearchTitle(title: string, url: string, snippet: string) {
+  const compact = title.replace(/[\sـ_\-–—|:]+/g, "").trim();
+  if (compact.length >= 4) return title.trim();
+  const caseMatch = snippet.match(/(?:الطعن|الدعوى|القضية|إحالة|طلب)\s*(?:رقم)?\s*[\d٠-٩]+[^\n]{0,50}/i)?.[0];
+  if (caseMatch) return caseMatch.replace(/\s+/g, " ").trim();
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "مصدر قانوني"; }
+}
+
 export async function tavilyLegalSearch(args: { query: string; contextHint?: string; signal: AbortSignal; visual?: boolean }) {
   const started = Date.now();
   const apiKey = process.env.TAVILY_API_KEY;
@@ -309,15 +328,33 @@ export async function tavilyLegalSearch(args: { query: string; contextHint?: str
     if (!response.ok) throw new Error(`Tavily HTTP ${response.status}`);
     const data = await response.json() as { results?: Array<{ title?: string; url?: string; content?: string }>; images?: Array<string | { url?: string; image_url?: string; description?: string }> };
     const ranked = (data.results ?? []).filter((item) => item.url?.startsWith("https://")).map((item) => {
-      const title = item.title || item.url || "Source";
-      const snippet = item.content?.slice(0, 1400) ?? "";
+      const snippet = item.content?.slice(0, 2200) ?? "";
+      const title = cleanSearchTitle(item.title || item.url || "Source", item.url!, snippet);
       const relevance = sourceRelevance(title, item.url!, snippet, terms);
       return { title, url: item.url!, snippet, ...relevance };
     }).sort((a, b) => b.score - a.score);
 
-    // Require either multiple semantic hits or a strong official-domain score.
-    const accepted = ranked.filter((item) => item.score >= 16 && (item.hits >= 1 || item.score >= 22)).slice(0, 5);
-    const evidence: ResearchEvidence[] = accepted.map((item, index) => ({ citationId: `W${index + 1}`, sourceType: "tavily", title: item.title, url: item.url, snippet: item.snippet, content: item.snippet, score: item.score }));
+    // Require either multiple semantic hits or a strong official-domain score. If an exact
+    // high-signal judgment page is present, keep the evidence set tight instead of adding generic
+    // court homepages that do not materially support the answer.
+    const eligible = ranked.filter((item) => item.score >= 16 && (item.hits >= 1 || item.score >= 22));
+    const exactOfficial = eligible.find((item) => isOfficialBahrainUrl(item.url) && item.score >= 42 && item.hits >= 3 && /(?:File\.aspx|Legislation\/HTM|\bCC\d+)/i.test(item.url));
+    const accepted = exactOfficial
+      ? [
+          exactOfficial,
+          ...eligible.filter((item) => {
+            if (item === exactOfficial || item.score < 35 || item.hits < 2) return false;
+            try {
+              const url = new URL(item.url);
+              // A court/authority homepage does not add evidence once the exact judgment is found.
+              return url.pathname !== "/" && url.pathname.length > 2;
+            } catch {
+              return false;
+            }
+          }),
+        ].slice(0, 3)
+      : eligible.slice(0, 5);
+    const evidence: ResearchEvidence[] = accepted.map((item, index) => ({ citationId: `W${index + 1}`, sourceType: "tavily", title: item.title, url: canonicalEvidenceUrl(item.url) || item.url, snippet: item.snippet, content: item.snippet, score: item.score }));
 
     const imageCandidates = Array.from(new Map((data.images ?? [])
       .map((item) => typeof item === "string" ? { url: item } : { url: item.url ?? item.image_url ?? "", description: item.description })
@@ -364,7 +401,7 @@ export function selectLegalSkillIds(text: string, hasAttachments: boolean) {
   if (hasAttachments) ids.add("case-file-analysis");
   if (/دستور|دستوري|المحكمه الدستوريه|المحكمة الدستورية|constitutional|constitution|سمو الدستور|فصل السلطات/.test(normalized)) ids.add("constitutional-review-analysis");
   if (/حكم|احكام|أحكام|سابقة|تمييز|استئناف|محكمه|محكمة|قضيه|قضية|judgment|judgement|precedent|appeal|cassation/.test(normalized)) ids.add("bahrain-judgment-research");
-  if (/قانون|مرسوم|قرار|لائحه|لائحة|ماده|مادة|تشريع|نفاذ|تعديل|law|decree|article|legislation|regulation/.test(normalized)) ids.add("bahrain-legislation-verification");
+  if (/قانون|مرسوم|قرار|لائحه|لائحة|ماده|مادة|تشريع|نفاذ|تعديل|تحكيم|تنفيذ|law|decree|article|legislation|regulation|arbitration|enforcement/.test(normalized)) ids.add("bahrain-legislation-verification");
   if (/خدمه|خدمة|معامله|معاملة|الكتروني|إلكتروني|service|egovernment/.test(normalized)) ids.add("judicial-egovernment-navigation");
   if (hasAttachments) ids.add("legal-document-review");
   return [...ids];
@@ -387,9 +424,9 @@ export function validateEvidenceCitations(answer: string, evidence: ResearchEvid
   const invalid = uniqueFound.filter((id) => !valid.has(id));
   const validFound = uniqueFound.filter((id) => valid.has(id));
   const rawUrls = [...answer.matchAll(/https?:\/\/[^\s<>"'`{}\[\]]+/g)]
-    .map((match) => canonicalUrl(match[0]))
+    .map((match) => canonicalEvidenceUrl(match[0]))
     .filter(Boolean);
-  const allowedUrls = new Set(evidence.map((item) => canonicalUrl(item.url)).filter(Boolean));
+  const allowedUrls = new Set(evidence.map((item) => canonicalEvidenceUrl(item.url)).filter(Boolean));
   const unapprovedUrls = [...new Set(rawUrls.filter((url) => !allowedUrls.has(url)))];
   return {
     validFound,

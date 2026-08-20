@@ -15,12 +15,13 @@ import { agentSkills } from "@/data/agent-skills";
 import { cn } from "@/lib/utils";
 import { resolveCaseLogos } from "@/lib/bahrain-logo-match";
 
-type NodeResult = { id: string; label: string; status: "done" | "skipped" | "error"; ms: number; detail?: string };
+type NodeResult = { id: string; label: string; status: "running" | "done" | "skipped" | "error"; ms: number; detail?: string };
 type CaseMatch = { id: string; caseNumber: string; caseYear: number; caseType: string; clientName: string; accusedName?: string; victimName?: string; court?: string; status?: string; judgment?: string; judgeName?: string; notes?: string; nextHearing?: string; score: number };
 type ChatAttachment = { id: string; name: string; type: string; size: number; previewUrl?: string };
 type PendingAttachment = ChatAttachment & { file: File };
 type GenerationInfo = { finishReason?: string; finishMessage?: string; outputTokens?: number; thoughtTokens?: number; thinkingBudget?: number; continuations?: number; truncated?: boolean };
-type DebugEvent = { id: string; kind: "thinking" | "tool" | "skill" | "validation" | "quota"; title: string; status: "done" | "skipped" | "error"; ms?: number; summary?: string; input?: unknown; output?: unknown };
+type DebugEvent = { id: string; kind: "thinking" | "tool" | "skill" | "validation" | "quota"; title: string; status: "running" | "done" | "skipped" | "error"; ms?: number; summary?: string; input?: unknown; output?: unknown };
+type AgentStreamEnvelope = { type: "node"; node: NodeResult } | { type: "debug"; event: DebugEvent } | { type: "final"; status: number; payload: any };
 type ChatMessage = { id: string; role: "user" | "assistant"; content: string; attachments?: ChatAttachment[]; model?: string; nodes?: NodeResult[]; debugEvents?: DebugEvent[]; code?: string; codeResult?: string; sources?: AgentSource[]; images?: AgentImage[]; caseMatches?: CaseMatch[]; generation?: GenerationInfo };
 type StoredConversation = { id: string; title: string; createdAt: number; updatedAt: number; messages: ChatMessage[] };
 type SpeechResultEvent = { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> };
@@ -112,6 +113,14 @@ function prettyDebugValue(value: unknown) {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
+function upsertById<T extends { id: string }>(items: T[] | undefined, item: T) {
+  const next = [...(items ?? [])];
+  const index = next.findIndex((current) => current.id === item.id);
+  if (index >= 0) next[index] = item;
+  else next.push(item);
+  return next;
+}
+
 function copyCodeFence(value: unknown, language = "json") {
   const rendered = prettyDebugValue(value);
   return `\`\`\`${language}\n${rendered}\n\`\`\``;
@@ -120,7 +129,7 @@ function copyCodeFence(value: unknown, language = "json") {
 function buildCompleteCopyText(message: ChatMessage, userMessage: ChatMessage | undefined, ar: boolean) {
   const lines: string[] = [];
   const hr = "---";
-  const statusLabel = (status: NodeResult["status"] | DebugEvent["status"]) => status === "done" ? "DONE" : status === "error" ? "ERROR" : "SKIPPED";
+  const statusLabel = (status: NodeResult["status"] | DebugEvent["status"]) => status === "running" ? "RUNNING" : status === "done" ? "DONE" : status === "error" ? "ERROR" : "SKIPPED";
 
   lines.push(ar ? "# سجل طلب الوكيل القانوني" : "# Legal Agent Response Record");
   lines.push("");
@@ -279,10 +288,10 @@ function DebugTrace({ events, nodes, ar }: { events?: DebugEvent[]; nodes?: Node
       </div>
       {(events ?? []).map((event) => {
         const label = event.kind === "thinking" ? (ar ? "التفكير" : "Thinking") : event.kind === "tool" ? (ar ? "أداة" : "Tool") : event.kind === "skill" ? (ar ? "مهارة" : "Skill") : event.kind === "quota" ? (ar ? "حماية الكوتا" : "Quota guard") : (ar ? "تحقق" : "Validation");
-        const tone = event.status === "error" ? "border-red-400/25" : event.kind === "thinking" ? "border-violet-400/20" : event.kind === "skill" ? "border-[#b89555]/25" : "border-white/10";
-        return <details key={event.id} className={`group overflow-hidden rounded-md border ${tone} bg-white/[.018]`}>
+        const tone = event.status === "error" ? "border-red-400/25" : event.status === "running" ? "border-violet-400/30" : "border-emerald-500/20";
+        return <details key={event.id} {...(event.status === "running" ? { open: true } : {})} className={`group overflow-hidden rounded-md border ${tone} bg-white/[.018]`}>
           <summary className="focus-ring flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 text-[11px] text-white/65">
-            {event.status === "done" ? <CheckCircle2 size={13} className="shrink-0 text-emerald-400" /> : event.status === "error" ? <ShieldAlert size={13} className="shrink-0 text-red-400" /> : <CircleDashed size={13} className="shrink-0 text-white/35" />}
+            {event.status === "running" ? <LoaderCircle size={13} className="shrink-0 animate-spin text-violet-300" /> : event.status === "error" ? <ShieldAlert size={13} className="shrink-0 text-red-400" /> : <CheckCircle2 size={13} className={`shrink-0 ${event.status === "skipped" ? "text-emerald-500/65" : "text-emerald-400"}`} />}
             <span className="rounded-sm border border-white/8 bg-white/[.03] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-white/35">{label}</span>
             <strong className="min-w-0 flex-1 truncate font-medium text-white/70" dir="auto">{event.title}</strong>
             {typeof event.ms === "number" && event.ms > 0 && <span className="shrink-0 text-[9px] text-white/30">{event.ms}ms</span>}
@@ -297,7 +306,7 @@ function DebugTrace({ events, nodes, ar }: { events?: DebugEvent[]; nodes?: Node
       })}
       {nodes && nodes.length > 0 && <details className="group overflow-hidden rounded-md border border-white/10 bg-white/[.018]">
         <summary className="focus-ring flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 text-[11px] text-white/65"><CircleDashed size={13} className="text-[#d0ad69]" /><span className="rounded-sm border border-white/8 bg-white/[.03] px-1.5 py-0.5 text-[9px] uppercase text-white/35">NODES</span><strong className="flex-1 font-medium">{ar ? "مسار التنفيذ" : "Execution pipeline"}</strong><ChevronDown size={13} className="transition group-open:rotate-180" /></summary>
-        <div className="flex flex-wrap gap-2 border-t border-white/8 p-3">{nodes.map((node) => <span key={node.id} title={node.detail} className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] ${node.status === "done" ? "border-emerald-600/30 bg-emerald-500/8 text-emerald-300" : node.status === "error" ? "border-red-400/20 bg-red-400/8 text-red-300" : "border-white/10 text-white/35"}`}>{node.status === "done" ? <CheckCircle2 size={11} /> : <CircleDashed size={11} />}{node.label}{node.ms > 0 && ` · ${node.ms}ms`}{node.detail && <span className="opacity-60"> · {node.detail}</span>}</span>)}</div>
+        <div className="flex flex-wrap gap-2 border-t border-white/8 p-3">{nodes.map((node) => <span key={node.id} title={node.detail} className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] ${node.status === "error" ? "border-red-400/20 bg-red-400/8 text-red-300" : node.status === "running" ? "border-violet-400/25 bg-violet-400/8 text-violet-200" : "border-emerald-600/25 bg-emerald-500/7 text-emerald-300"}`}>{node.status === "running" ? <LoaderCircle size={11} className="animate-spin" /> : node.status === "error" ? <ShieldAlert size={11} /> : <CheckCircle2 size={11} className={node.status === "skipped" ? "opacity-65" : ""} />}{node.label}{node.ms > 0 && ` · ${node.ms}ms`}{node.detail && <span className="opacity-60"> · {node.detail}</span>}</span>)}</div>
       </details>}
     </section>
   );
@@ -656,23 +665,96 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
         const pastHistory = conversations.filter((item) => item.id !== nextConversationId).slice(0, 12).map((item) => `Conversation: ${item.title}\n${(item.messages ?? []).slice(-12).map((message) => `${message.role}: ${message.content}`).join("\n")}`).join("\n\n").slice(0, 15000);
         form.set("pastHistory", pastHistory);
       }
-      const response = await fetch("/api/admin/agent", { method: "POST", headers: { authorization: `Bearer ${token}` }, body: form, signal: controller.signal });
-      const responseText = await response.text();
-      let body: any;
-      try { body = responseText ? JSON.parse(responseText) : {}; }
-      catch {
-        body = {
-          ok: false,
-          message: ar ? `فشل طلب الوكيل عند طبقة الخادم (${response.status}).` : `The agent request failed at the server layer (${response.status}).`,
-          error: {
-            httpStatus: response.status,
-            code: response.headers.get("x-vercel-error") || response.statusText || "NON_JSON_RESPONSE",
-            providerMessage: responseText.slice(0, 900),
-          },
+      const liveAssistantId = crypto.randomUUID();
+      let liveAssistant: ChatMessage = { id: liveAssistantId, role: "assistant", content: "", nodes: [], debugEvents: [] };
+      let streamedResponse = false;
+      let responseStatus = 0;
+      let body: any = {};
+
+      const response = await fetch("/api/admin/agent?stream=1", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, accept: "application/x-ndjson" },
+        body: form,
+        signal: controller.signal,
+      });
+      responseStatus = response.status;
+      const responseType = response.headers.get("content-type") ?? "";
+
+      if (response.body && responseType.includes("application/x-ndjson")) {
+        streamedResponse = true;
+        setMessages([...withUserMessage, liveAssistant]);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let sawFinal = false;
+
+        const publishLive = () => {
+          const snapshot = { ...liveAssistant, nodes: [...(liveAssistant.nodes ?? [])], debugEvents: [...(liveAssistant.debugEvents ?? [])] };
+          setMessages((current) => {
+            const index = current.findIndex((item) => item.id === liveAssistantId);
+            if (index < 0) return [...withUserMessage, snapshot];
+            const next = [...current];
+            next[index] = snapshot;
+            return next;
+          });
         };
+
+        const consumeEnvelope = (packet: AgentStreamEnvelope) => {
+          if (packet.type === "node") {
+            liveAssistant.nodes = upsertById(liveAssistant.nodes, packet.node);
+            publishLive();
+            return;
+          }
+          if (packet.type === "debug") {
+            liveAssistant.debugEvents = upsertById(liveAssistant.debugEvents, packet.event);
+            publishLive();
+            return;
+          }
+          if (packet.type === "final") {
+            sawFinal = true;
+            responseStatus = packet.status;
+            body = packet.payload ?? {};
+          }
+        };
+
+        while (true) {
+          const { value: chunk, done } = await reader.read();
+          if (chunk) {
+            buffer += decoder.decode(chunk, { stream: !done });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try { consumeEnvelope(JSON.parse(line) as AgentStreamEnvelope); }
+              catch { /* Ignore one malformed progress line; final payload still governs the request. */ }
+            }
+          }
+          if (done) break;
+        }
+        if (buffer.trim()) {
+          try { consumeEnvelope(JSON.parse(buffer) as AgentStreamEnvelope); } catch { /* final check below */ }
+        }
+        if (!sawFinal) {
+          body = { ok: false, message: ar ? "انقطع بث الوكيل قبل وصول النتيجة النهائية." : "The agent stream ended before the final result arrived.", error: { httpStatus: responseStatus || 502, code: "STREAM_ENDED_WITHOUT_FINAL" } };
+          responseStatus = responseStatus || 502;
+        }
+      } else {
+        const responseText = await response.text();
+        try { body = responseText ? JSON.parse(responseText) : {}; }
+        catch {
+          body = {
+            ok: false,
+            message: ar ? `فشل طلب الوكيل عند طبقة الخادم (${response.status}).` : `The agent request failed at the server layer (${response.status}).`,
+            error: {
+              httpStatus: response.status,
+              code: response.headers.get("x-vercel-error") || response.statusText || "NON_JSON_RESPONSE",
+              providerMessage: responseText.slice(0, 900),
+            },
+          };
+        }
       }
-      if (!response.ok || !body.ok) {
-        const providerStatus = body.error?.httpStatus ? `HTTP ${body.error.httpStatus}` : `HTTP ${response.status}`;
+      if (responseStatus >= 400 || !body.ok) {
+        const providerStatus = body.error?.httpStatus ? `HTTP ${body.error.httpStatus}` : `HTTP ${responseStatus || response.status}`;
         const providerCode = body.error?.code ? ` · ${body.error.code}` : "";
         const providerDetail = body.error?.providerMessage ? `
 
@@ -697,7 +779,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
 
 Open the **Agent trace** below to inspect the failed node and retry timing.`;
         const failedAssistant: ChatMessage = {
-          id: crypto.randomUUID(),
+          id: streamedResponse ? liveAssistantId : crypto.randomUUID(),
           role: "assistant",
           content: failureContent,
           model: body.model || "Gemini",
@@ -714,12 +796,17 @@ Open the **Agent trace** below to inspect the failed node and retry timing.`;
         void saveConversation(nextConversationId, failedMessages, question, Date.now());
         return;
       }
-      const assistantMessage: ChatMessage = { id: crypto.randomUUID(), role: "assistant", content: body.answer, model: body.model, nodes: body.nodes, debugEvents: body.debugEvents, code: body.code, codeResult: body.codeResult, sources: body.sources, images: body.images, caseMatches: body.caseMatches, generation: body.generation };
+      const assistantMessage: ChatMessage = { id: streamedResponse ? liveAssistantId : crypto.randomUUID(), role: "assistant", content: body.answer, model: body.model, nodes: body.nodes ?? liveAssistant.nodes, debugEvents: body.debugEvents ?? liveAssistant.debugEvents, code: body.code, codeResult: body.codeResult, sources: body.sources, images: body.images, caseMatches: body.caseMatches, generation: body.generation };
       const completedMessages = [...withUserMessage, assistantMessage];
       setMessages(completedMessages);
       setBusy(false);
-      setTypingLength(Math.min(8, assistantMessage.content.length));
-      setTypingMessageId(assistantMessage.id);
+      if (streamedResponse) {
+        setTypingLength(0);
+        setTypingMessageId("");
+      } else {
+        setTypingLength(Math.min(8, assistantMessage.content.length));
+        setTypingMessageId(assistantMessage.id);
+      }
       setStoppedTyping(null);
       void saveConversation(nextConversationId, completedMessages, question, requestedAt + 1);
       try {

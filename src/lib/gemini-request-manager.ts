@@ -197,12 +197,15 @@ export async function runGeminiRequest<T>(args: {
   signal: AbortSignal;
   maxAttempts?: number;
   call: () => Promise<T>;
+  onAttemptStart?: (attempt: number, pacedMs: number) => void;
+  onAttemptFailure?: (attempt: number, info: GeminiErrorInfo, backoffMs: number, willRetry: boolean) => void;
 }): Promise<{ value: T; attempts: GeminiAttemptTrace[] }> {
   const maxAttempts = args.maxAttempts ?? (/flash-lite/i.test(args.model) ? 3 : 4);
   const attempts: GeminiAttemptTrace[] = [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const pacedMs = await waitForPacer(args.model, args.signal);
+    args.onAttemptStart?.(attempt, pacedMs);
     const started = Date.now();
     try {
       const value = await args.call();
@@ -225,6 +228,7 @@ export async function runGeminiRequest<T>(args: {
         code: info.code,
         message: info.providerMessage,
       });
+      args.onAttemptFailure?.(attempt, info, backoffMs, canRetry);
       if (!canRetry) throw new GeminiRequestError(info, attempts);
       await sleep(backoffMs, args.signal);
     }

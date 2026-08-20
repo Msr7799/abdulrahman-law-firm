@@ -52,6 +52,7 @@ export function selectGeminiModelPolicy(input: {
   webSearch: boolean;
   activeSkillIds?: string[];
   officialEvidenceCount?: number;
+  authoritativeEvidenceReady?: boolean;
 }) : GeminiModelPolicy {
   const text = input.message.trim();
   const lower = text.toLowerCase();
@@ -82,6 +83,13 @@ export function selectGeminiModelPolicy(input: {
   if (explicitDeep) { score += 4; reasons.push("طلب تحليل عميق صريح"); }
   if (skillIds.length >= 4) { score += 1; reasons.push(`${skillIds.length} مهارات قانونية فعالة`); }
   if ((input.officialEvidenceCount ?? 0) >= 2) reasons.push("مصادر رسمية متاحة");
+  if (input.authoritativeEvidenceReady && !explicitDeep) {
+    // When the exact official judgment/legislation is already recovered, the task shifts from
+    // open-ended research to grounded analysis. Save the high-thinking lane for genuinely
+    // unresolved or multi-source problems.
+    score = Math.max(0, score - 2);
+    reasons.push("مصدر رسمي حاكم متاح؛ خفض تكلفة التفكير المفتوح");
+  }
 
   const shortNonLegal = !legalIntent && !input.webSearch && fileCount === 0 && text.length <= 700;
 
