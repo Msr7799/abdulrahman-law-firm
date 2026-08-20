@@ -39,7 +39,9 @@ function AgentCaseLogoCluster({ item, ar }: { item: CaseMatch; ar: boolean }) {
 }
 
 const maxFiles = 5;
-const maxTotalBytes = 50 * 1024 * 1024;
+const maxTotalBytes = 200 * 1024 * 1024;
+const pdfCompressionThresholdBytes = 18 * 1024 * 1024;
+const pdfDpiOptions = [72, 96, 100, 120, 130, 150, 170, 200] as const;
 const acceptedTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif", "text/plain", "text/markdown", "text/csv", "application/json"]);
 
 const quickQuestions = {
@@ -141,6 +143,8 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
   const [conversations, setConversations] = useState<StoredConversation[]>([]);
   const [conversationId, setConversationId] = useState("");
   const [webSearch, setWebSearch] = useState(true);
+  const [autoCompressPdf, setAutoCompressPdf] = useState(true);
+  const [pdfDpi, setPdfDpi] = useState(150);
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
@@ -170,6 +174,9 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     const frame = window.requestAnimationFrame(() => {
       setInput(window.localStorage.getItem(`legal-agent-draft:${user.uid}`) ?? "");
       setWebSearch(window.localStorage.getItem(`legal-agent-web-search:${user.uid}`) !== "false");
+      setAutoCompressPdf(window.localStorage.getItem(`legal-agent-pdf-auto-compress:${user.uid}`) !== "false");
+      const savedDpi = Number(window.localStorage.getItem(`legal-agent-pdf-dpi:${user.uid}`) ?? 150);
+      setPdfDpi(pdfDpiOptions.includes(savedDpi as (typeof pdfDpiOptions)[number]) ? savedDpi : 150);
       setHistorySidebarCollapsed(window.localStorage.getItem(`legal-agent-sidebar-collapsed:${user.uid}`) === "true");
       setQuickQuestionsOpen(window.localStorage.getItem(`legal-agent-quick-open:${user.uid}`) !== "false");
       setDraftReady(true);
@@ -185,6 +192,12 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     if (!draftReady) return;
     window.localStorage.setItem(`legal-agent-web-search:${user.uid}`, String(webSearch));
   }, [draftReady, user.uid, webSearch]);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    window.localStorage.setItem(`legal-agent-pdf-auto-compress:${user.uid}`, String(autoCompressPdf));
+    window.localStorage.setItem(`legal-agent-pdf-dpi:${user.uid}`, String(pdfDpi));
+  }, [autoCompressPdf, draftReady, pdfDpi, user.uid]);
 
   useEffect(() => {
     if (!draftReady) return;
@@ -307,7 +320,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
     const unsupported = incoming.find((file) => !acceptedTypes.has(fileMimeType(file)));
     if (unsupported) { setError(ar ? `نوع الملف غير مدعوم: ${unsupported.name}` : `Unsupported file type: ${unsupported.name}`); return; }
     const total = [...attachments.map((item) => item.size), ...incoming.map((file) => file.size)].reduce((sum, size) => sum + size, 0);
-    if (total > maxTotalBytes) { setError(ar ? "إجمالي المرفقات يجب ألا يتجاوز 50MB." : "Attachments must total 50MB or less."); return; }
+    if (total > maxTotalBytes) { setError(ar ? "إجمالي المرفقات قبل الضغط يجب ألا يتجاوز 200MB." : "Attachments before compression must total 200MB or less."); return; }
     setAttachments((current) => [...current, ...incoming.map((file) => { const type = fileMimeType(file); return { id: crypto.randomUUID(), file, name: file.name, type, size: file.size, previewUrl: type.startsWith("image/") || type === "application/pdf" ? URL.createObjectURL(file) : undefined }; })]);
     setError("");
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -433,7 +446,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
       requestControllerRef.current = controller;
       const form = new FormData();
       const requestHistory = baseMessages.filter((item) => item.id !== "welcome").slice(-8).map(({ role, content }) => ({ role, content: content.slice(0, 5000) }));
-      form.set("message", question); form.set("webSearch", String(webSearch)); form.set("history", JSON.stringify(requestHistory));
+      form.set("message", question); form.set("webSearch", String(webSearch)); form.set("autoCompressPdf", String(autoCompressPdf)); form.set("pdfDpi", String(pdfDpi)); form.set("history", JSON.stringify(requestHistory));
       selectedAttachments.forEach(({ file }) => form.append("files", file, file.name));
       if (asksForPastHistory(question)) {
         const pastHistory = conversations.filter((item) => item.id !== nextConversationId).slice(0, 12).map((item) => `Conversation: ${item.title}\n${(item.messages ?? []).slice(-12).map((message) => `${message.role}: ${message.content}`).join("\n")}`).join("\n\n").slice(0, 15000);
@@ -530,7 +543,7 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
         <li><strong className="block text-white/75">03 · Bahrain News Feed</strong>{ar ? "يقرأ أخبار اليوم وكل الأخبار المعروضة حاليًا في الموقع من نفس خط التجميع." : "Reads today's Bahrain news and the exact current site news feed."}</li>
         <li><strong className="block text-white/75">04 · Logo Directory</strong>{ar ? "يبحث داخل bahrain-logos-all-categorized.html ويجهز الشعارات المناسبة للإجابة." : "Searches bahrain-logos-all-categorized.html and prepares relevant logos for answers."}</li>
         <li><strong className="block text-white/75">05 · Tavily</strong>{ar ? "يجلب مصادر وصورًا إضافية عند تشغيل البحث الخارجي." : "Fetches additional sources and images when external search is enabled."}</li>
-        <li><strong className="block text-white/75">06 · Attachments</strong>{ar ? "يرفع الملفات الكبيرة ويقرأ PDF كاملًا." : "Uploads large files and reads complete PDFs."}</li>
+        <li><strong className="block text-white/75">06 · Attachments</strong>{ar ? "يضغط PDF الكبير تلقائياً عند الحاجة ثم يرفعه ويقرأه كاملاً." : "Auto-compresses large PDFs when needed, then uploads and reads them in full."}</li>
         <li><strong className="block text-white/75">07 · Python Sandbox</strong>{ar ? "ينفذ الحسابات والتحليل البرمجي في بيئة معزولة." : "Runs calculations and code analysis in an isolated environment."}</li>
         <li><strong className="block text-white/75">08 · Gemini</strong>{ar ? "يطبق المهارات القضائية ويصوغ الإجابة." : "Applies legal skills and drafts the answer."}</li>
       </ol>
@@ -662,13 +675,18 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
             <div className="mb-2 rounded-2xl border border-white/10 bg-[#101d21] p-2 shadow-2xl xl:hidden">
               {recentPrompts.length > 0 && <details className="group rounded-xl border border-white/8 bg-black/10"><summary className="focus-ring flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 text-xs text-white/65"><span className="flex items-center gap-2"><History size={14} />{ar ? `آخر البرومبتات (${recentPrompts.length}/20)` : `Recent prompts (${recentPrompts.length}/20)`}</span><ChevronDown className="transition group-open:rotate-180" size={14} /></summary><div className="max-h-40 overflow-y-auto border-t border-white/8 p-1">{recentPrompts.map((prompt, index) => <AgentButton key={`${prompt}-${index}`} type="button" onClick={() => { setInput(prompt); setMobileToolsOpen(false); }} className="focus-ring block min-h-10 w-full truncate rounded-lg px-3 text-start text-[11px] text-white/55 hover:bg-white/5 hover:text-white" title={prompt}>{prompt}</AgentButton>)}</div></details>}
               <label className="mt-2 flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-xl border border-white/8 px-3 text-xs text-white/65"><span className="flex items-center gap-2"><Globe2 size={15} />{ar ? "البحث في المصادر الرسمية" : "Official-source web search"}</span><input type="checkbox" checked={webSearch} onChange={(event) => setWebSearch(event.target.checked)} className="size-4 shrink-0" /></label>
-              <p className="px-3 pt-2 text-[10px] text-white/30">{ar ? "حتى 5 ملفات · 50MB · مهلة 10 ثوانٍ" : "Up to 5 files · 50MB · 10-second cooldown"}</p>
+              <div className="mt-2 rounded-xl border border-white/8 p-3 text-xs text-white/65">
+                <label className="flex min-h-8 cursor-pointer items-center justify-between gap-3"><span>{ar ? "ضغط PDF الكبير تلقائياً" : "Auto-compress large PDFs"}</span><input type="checkbox" checked={autoCompressPdf} onChange={(event) => setAutoCompressPdf(event.target.checked)} className="size-4 shrink-0" /></label>
+                <label className="mt-2 flex items-center justify-between gap-3"><span>{ar ? "دقة الضغط" : "Compression DPI"}</span><select value={pdfDpi} disabled={!autoCompressPdf} onChange={(event) => setPdfDpi(Number(event.target.value))} className="rounded-md border border-white/10 bg-black/20 px-2 py-1.5 text-xs text-white outline-none disabled:opacity-40">{pdfDpiOptions.map((dpi) => <option key={dpi} value={dpi} className="bg-[#101d21]">{dpi} DPI</option>)}</select></label>
+                <p className="mt-2 text-[10px] leading-4 text-white/35">{ar ? "يبدأ الضغط تلقائياً للـPDF الأكبر من 18MB. الملفات الموقعة رقمياً تُحفظ بدون تعديل." : "Compression starts automatically above 18MB. Digitally signed PDFs are kept unchanged."}</p>
+              </div>
+              <p className="px-3 pt-2 text-[10px] text-white/30">{ar ? "حتى 5 ملفات · 200MB قبل المعالجة · مهلة 10 ثوانٍ" : "Up to 5 files · 200MB before processing · 10-second cooldown"}</p>
             </div>
           )}
 
           {recentPrompts.length > 0 && <div className="mx-auto mb-2 hidden w-full max-w-4xl xl:block"><details className="group rounded-xl border border-white/10 bg-black/10"><summary className="focus-ring flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 text-xs text-white/55"><span className="flex items-center gap-2"><History size={14} />{ar ? `آخر البرومبتات (${recentPrompts.length}/20)` : `Recent prompts (${recentPrompts.length}/20)`}</span><ChevronDown className="transition group-open:rotate-180" size={14} /></summary><div className="max-h-48 overflow-y-auto border-t border-white/10 p-1">{recentPrompts.map((prompt, index) => <AgentButton key={`${prompt}-${index}`} type="button" onClick={(event) => { setInput(prompt); event.currentTarget.closest("details")?.removeAttribute("open"); }} className="focus-ring block min-h-10 w-full truncate border-b border-white/5 px-3 text-start text-[11px] text-white/50 hover:bg-white/5 hover:text-white" title={prompt}>{prompt}</AgentButton>)}</div></details></div>}
 
-          {attachments.length > 0 && <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{attachments.map((attachment) => <div key={attachment.id} className="relative flex min-w-40 max-w-56 items-center gap-2 rounded-xl border border-white/12 bg-white/[.055] p-2 pe-8">{attachment.previewUrl ? <Image src={attachment.previewUrl} alt="" width={40} height={40} unoptimized className="size-9 shrink-0 rounded-lg object-cover" /> : <FileText className="shrink-0 text-[#d0ad69]" size={20} />}<span className="min-w-0"><strong className="block truncate text-[11px]">{attachment.name}</strong><small className="text-[9px] text-white/35">{formatBytes(attachment.size)}</small></span><AgentButton type="button" size="icon" onClick={() => removeAttachment(attachment.id)} aria-label={ar ? "إزالة المرفق" : "Remove attachment"} className="focus-ring absolute end-0.5 top-0.5 grid size-7 place-items-center rounded-full text-white/40 hover:text-white"><X size={14} /></AgentButton></div>)}</div>}
+          {attachments.length > 0 && <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{attachments.map((attachment) => { const willCompress = autoCompressPdf && attachment.type === "application/pdf" && attachment.size > pdfCompressionThresholdBytes; return <div key={attachment.id} className="relative flex min-w-40 max-w-60 items-center gap-2 rounded-xl border border-white/12 bg-white/[.055] p-2 pe-8">{attachment.previewUrl ? <Image src={attachment.previewUrl} alt="" width={40} height={40} unoptimized className="size-9 shrink-0 rounded-lg object-cover" /> : <FileText className="shrink-0 text-[#d0ad69]" size={20} />}<span className="min-w-0"><strong className="block truncate text-[11px]">{attachment.name}</strong><small className="block text-[9px] text-white/35">{formatBytes(attachment.size)}</small>{willCompress && <small className="mt-0.5 block text-[9px] font-bold text-amber-300/80">{ar ? `سيُضغط تلقائياً · ${pdfDpi} DPI` : `Auto-compress · ${pdfDpi} DPI`}</small>}</span><AgentButton type="button" size="icon" onClick={() => removeAttachment(attachment.id)} aria-label={ar ? "إزالة المرفق" : "Remove attachment"} className="focus-ring absolute end-0.5 top-0.5 grid size-7 place-items-center rounded-full text-white/40 hover:text-white"><X size={14} /></AgentButton></div>; })}</div>}
 
           <div className="mx-auto mb-2 w-full max-w-4xl">
               <button type="button" onClick={() => setQuickQuestionsOpen((current) => !current)} aria-expanded={quickQuestionsOpen} className="focus-ring mb-1.5 flex w-full items-center justify-center gap-1.5 px-0.5 text-[9px] font-bold leading-none text-white/45 transition-colors hover:text-white/75 sm:text-[10px]"><Sparkles size={12} className="sm:size-[14px]" />{ar ? "جرّب سؤالاً سريعاً" : "Try a quick question"}<ChevronDown size={13} className={`transition-transform duration-300 ${quickQuestionsOpen ? "rotate-180" : ""}`} /></button>
@@ -696,10 +714,11 @@ export function LegalAgent({ locale, user, onOpenCases }: { locale: Locale; user
             <div className="flex items-center justify-between gap-1 px-1 pb-0.5">
               <div className="flex min-w-0 items-center gap-0.5">
                 <input ref={fileInputRef} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,application/json,.txt,.md,.csv,.json,.pdf" onChange={(event) => addAttachments(event.target.files)} className="hidden" />
-                <AgentButton type="button" size="icon" disabled={responseActive || attachments.length >= maxFiles} onClick={() => fileInputRef.current?.click()} aria-label={ar ? "إرفاق صور أو ملفات" : "Attach images or files"} title={ar ? "صور، PDF وملفات نصية — حتى 50MB" : "Images, PDF and text — up to 50MB"} className="focus-ring grid size-10 place-items-center rounded-full text-white/55 hover:bg-white/5 hover:text-white disabled:opacity-30"><Paperclip size={18} /></AgentButton>
+                <AgentButton type="button" size="icon" disabled={responseActive || attachments.length >= maxFiles} onClick={() => fileInputRef.current?.click()} aria-label={ar ? "إرفاق صور أو ملفات" : "Attach images or files"} title={ar ? "صور، PDF وملفات نصية — حتى 200MB قبل المعالجة" : "Images, PDF and text — up to 200MB before processing"} className="focus-ring grid size-10 place-items-center rounded-full text-white/55 hover:bg-white/5 hover:text-white disabled:opacity-30"><Paperclip size={18} /></AgentButton>
                 <AgentButton type="button" size="icon" disabled={responseActive} onClick={() => void toggleVoice()} aria-label={listening ? (ar ? "إيقاف التسجيل" : "Stop recording") : (ar ? "إملاء صوتي" : "Voice dictation")} title={ar ? "الإملاء الصوتي" : "Voice dictation"} className={`focus-ring grid size-10 place-items-center rounded-full transition ${listening ? "bg-red-500/15 text-red-300" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>{listening ? <MicOff className="animate-pulse" size={18} /> : <Mic size={18} />}</AgentButton>
                 <AgentButton type="button" onClick={() => setMobileToolsOpen((current) => !current)} aria-expanded={mobileToolsOpen} aria-label={ar ? "أدوات إضافية" : "More tools"} className={`focus-ring grid size-10 place-items-center rounded-full xl:hidden ${mobileToolsOpen ? "bg-white/10 text-white" : "text-white/55 hover:bg-white/5 hover:text-white"}`}><Sparkles size={17} /></AgentButton>
                 <label className="hidden cursor-pointer items-center gap-2 rounded-full border border-white/10 px-3 py-2 text-[11px] text-white/55 xl:flex"><input type="checkbox" checked={webSearch} onChange={(event) => setWebSearch(event.target.checked)} className="size-3.5 shrink-0" /><Globe2 size={13} />{ar ? "Tavily" : "Tavily"}</label>
+                <label className="hidden items-center gap-1.5 rounded-full border border-white/10 px-2 py-1.5 text-[10px] text-white/55 xl:flex" title={ar ? "ضغط ملفات PDF الأكبر من 18MB قبل إرسالها للنموذج" : "Compress PDFs larger than 18MB before sending them to the model"}><input type="checkbox" checked={autoCompressPdf} onChange={(event) => setAutoCompressPdf(event.target.checked)} className="size-3.5 shrink-0" /><FileText size={13} /><span>{ar ? "PDF" : "PDF"}</span><select value={pdfDpi} disabled={!autoCompressPdf} onChange={(event) => setPdfDpi(Number(event.target.value))} className="rounded-md border border-white/10 bg-transparent px-1 py-0.5 text-[10px] text-white outline-none disabled:opacity-40">{pdfDpiOptions.map((dpi) => <option key={dpi} value={dpi} className="bg-[#101d21]">{dpi}</option>)}</select></label>
                 {listening && <span className="hidden text-[10px] text-red-300 sm:inline">{ar ? "أستمع الآن…" : "Listening…"}</span>}
               </div>
               {responseActive ? <AgentButton type="button" onClick={stopGeneration} aria-label={ar ? "إيقاف النموذج" : "Stop model"} className="focus-ring grid size-10 shrink-0 place-items-center rounded-full bg-white text-black hover:bg-white/90"><Square size={14} fill="currentColor" /></AgentButton> : <AgentButton disabled={cooldown > 0 || (input.trim().length < 3 && attachments.length === 0)} aria-label={ar ? "إرسال السؤال" : "Send question"} className="focus-ring grid size-10 shrink-0 place-items-center rounded-full bg-[#b89555] text-[#10191b] disabled:opacity-35">{cooldown > 0 ? <span className="text-xs font-black">{cooldown}</span> : <Send size={18} />}</AgentButton>}

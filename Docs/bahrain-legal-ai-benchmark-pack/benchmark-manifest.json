@@ -1,0 +1,63 @@
+{
+  "name": "Bahrain Legal AI Benchmark",
+  "version": "2026-08-20",
+  "case_count": 7,
+  "cases": [
+    {
+      "id": "01",
+      "file": "cases/CASE-01-constitutional_parliamentary_investigation.pdf",
+      "expected": "expected/CASE-01-expected.json",
+      "type": "دستوري",
+      "source": "المحكمة الدستورية - الطلب ط.ح/1/2020 - جلسة 9 سبتمبر 2020",
+      "source_url": "https://www.lloc.gov.bh/Legislation/HTM/CC0420"
+    },
+    {
+      "id": "02",
+      "file": "cases/CASE-02-constitutional_names_titles.pdf",
+      "expected": "expected/CASE-02-expected.json",
+      "type": "دستوري/إجرائي",
+      "source": "المحكمة الدستورية - الدعوى د/1/2019 - جلسة 25 مارس 2020",
+      "source_url": "https://www.lloc.gov.bh/Legislation/HTM/CC0320"
+    },
+    {
+      "id": "03",
+      "file": "cases/CASE-03-arbitration_enforcement.pdf",
+      "expected": "expected/CASE-03-expected.json",
+      "type": "تحكيم/تجاري",
+      "source": "محكمة التمييز - الطعن 53 لسنة 2021 - جلسة 25 أكتوبر 2021",
+      "source_url": "https://ahkam.sjc.bh/Htm/File.aspx?i=53+M+2021+K+108&p=1"
+    },
+    {
+      "id": "04",
+      "file": "cases/CASE-04-labour_covid_termination.pdf",
+      "expected": "expected/CASE-04-expected.json",
+      "type": "عمل",
+      "source": "محكمة التمييز - الطعن 51 لسنة 2021 - جلسة 27 أبريل 2021",
+      "source_url": "https://ahkam.sjc.bh/Htm/File.aspx?i=51+M+2021+K+50&p=1"
+    },
+    {
+      "id": "05",
+      "file": "cases/CASE-05-labour_mass_termination.pdf",
+      "expected": "expected/CASE-05-expected.json",
+      "type": "عمل/إثبات",
+      "source": "محكمة التمييز - الطعنان 455 و469 لسنة 2015 - جلسة 23 مايو 2017",
+      "source_url": "https://ahkam.sjc.bh/Htm/File.aspx?i=469+M+2015+K+199&p=1"
+    },
+    {
+      "id": "06",
+      "file": "cases/CASE-06-lawyers_aml_constitution.pdf",
+      "expected": "expected/CASE-06-expected.json",
+      "type": "إداري/دستوري/محاماة",
+      "source": "محكمة التمييز - الطعن 1038 لسنة 2018 - جلسة 1 يوليو 2019",
+      "source_url": "https://ahkam.sjc.bh/Htm/File.aspx?i=1038+M+2018+K+110&p=1"
+    },
+    {
+      "id": "07",
+      "file": "cases/CASE-07-construction_mediation_arbitration.pdf",
+      "expected": "expected/CASE-07-expected.json",
+      "type": "مقاولات/وساطة/تحكيم",
+      "source": "محكمة التمييز - الطعن 815 لسنة 2022 - جلسة 19 يونيو 2023",
+      "source_url": "https://ahkam.sjc.bh/Htm/File.aspx?i=815+M+2022+K+00&p=1"
+    }
+  ]
+}

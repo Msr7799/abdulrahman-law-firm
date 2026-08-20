@@ -51,7 +51,8 @@ function dedupe(logos: BahrainLogoRecord[]) {
 export async function getBahrainLogoDirectory() {
   if (cachedLogos) return cachedLogos;
 
-  // Primary curated directory in the project root. The literal path keeps Turbopack tracing scoped.
+  // Keep each root path statically analyzable. Using a variable filename inside
+  // path.join(process.cwd(), filename) makes Turbopack trace the whole project.
   try {
     const html = await readFile(path.join(process.cwd(), "bahrain-logos-all-categorized.html"), "utf8");
     const parsed = dedupe([...parseCategorizedLogoHtml(html), ...parseOriginalLogoHtml(html)]);
@@ -59,8 +60,12 @@ export async function getBahrainLogoDirectory() {
       cachedLogos = parsed;
       return cachedLogos;
     }
+    if (parsed.length >= 50) {
+      cachedLogos = dedupe([...parsed, ...bahrainLogoCatalog]);
+      return cachedLogos;
+    }
   } catch {
-    // Production bundles may omit the standalone root HTML; fall back below.
+    // Production bundles may omit the standalone curated HTML file.
   }
 
   try {
@@ -71,7 +76,7 @@ export async function getBahrainLogoDirectory() {
       return cachedLogos;
     }
   } catch {
-    // Optional legacy source.
+    // Try the remaining legacy capture.
   }
 
   try {
@@ -82,7 +87,7 @@ export async function getBahrainLogoDirectory() {
       return cachedLogos;
     }
   } catch {
-    // Optional legacy source.
+    // Fall back to the generated in-bundle catalog below.
   }
 
   cachedLogos = bahrainLogoCatalog.map((logo) => ({ ...logo }));

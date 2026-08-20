@@ -11,23 +11,27 @@ import { cacheRemoteAgentImage } from "@/lib/agent-image-cache";
 import { getLegalNews, isLegalNewsQuery, legalNewsForAgent, periodFromQuery } from "@/lib/legal-news";
 import { bahrainLogoDirectorySummary, searchBahrainLogoDirectory } from "@/lib/bahrain-logo-directory";
 import type { LegalNewsItem, LegalNewsLogo } from "@/types/legal-news";
+import { compressPdfForAi, type PdfCompressionReport } from "@/lib/pdf-compressor";
 
 export const runtime = "nodejs";
-export const maxDuration = 90;
+export const maxDuration = 180;
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
   webSearch: z.boolean().default(false),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(5000) })).max(8).default([]),
   pastHistory: z.string().max(15000).default(""),
+  autoCompressPdf: z.boolean().default(true),
+  pdfDpi: z.coerce.number().int().min(72).max(200).default(150),
 });
 
 const usage = new Map<string, { day: string; count: number; lastRequest: number }>();
 const cooldownMs = 10_000;
 const dailyLimit = 100;
 const maxFiles = 5;
-const maxTotalFileBytes = 50 * 1024 * 1024;
+const maxRawTotalFileBytes = 200 * 1024 * 1024;
 const maxInlineFileBytes = 18 * 1024 * 1024;
+const pdfCompressionThresholdBytes = maxInlineFileBytes;
 const maxTextFileBytes = 2 * 1024 * 1024;
 const allowedBinaryTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif"]);
 const allowedTextTypes = new Set(["text/plain", "text/markdown", "text/csv", "application/json"]);
@@ -55,54 +59,89 @@ async function readAgentRequest(request: Request): Promise<AgentRequest> {
   }
 
   const contentLength = Number(request.headers.get("content-length") ?? 0);
-  if (contentLength > maxTotalFileBytes + 1024 * 1024) throw new AttachmentError("حجم المرفقات يتجاوز الحد المسموح (50MB).", 413);
+  if (contentLength > maxRawTotalFileBytes + 2 * 1024 * 1024) throw new AttachmentError("حجم المرفقات قبل المعالجة يتجاوز الحد المسموح (200MB).", 413);
   const form = await request.formData();
   const parsed = requestSchema.safeParse({
     message: form.get("message"),
     webSearch: form.get("webSearch") === "true",
     history: safeJson(form.get("history")),
     pastHistory: typeof form.get("pastHistory") === "string" ? form.get("pastHistory") : "",
+    autoCompressPdf: form.get("autoCompressPdf") !== "false",
+    pdfDpi: form.get("pdfDpi") ?? 150,
   });
   if (!parsed.success) throw new AttachmentError("Invalid request");
   const files = form.getAll("files").filter((entry): entry is File => typeof entry !== "string" && entry.size > 0);
   if (files.length > maxFiles) throw new AttachmentError(`يمكن إرفاق ${maxFiles} ملفات كحد أقصى.`);
-  if (files.reduce((sum, file) => sum + file.size, 0) > maxTotalFileBytes) throw new AttachmentError("حجم المرفقات يتجاوز الحد المسموح (50MB).", 413);
+  if (files.reduce((sum, file) => sum + file.size, 0) > maxRawTotalFileBytes) throw new AttachmentError("حجم المرفقات قبل المعالجة يتجاوز الحد المسموح (200MB).", 413);
   return { ...parsed.data, files };
 }
 
-async function attachmentParts(files: File[], signal: AbortSignal) {
+async function attachmentParts(files: File[], signal: AbortSignal, options: { autoCompressPdf: boolean; pdfDpi: number }) {
   const parts: Part[] = [];
   const uploadedNames: string[] = [];
+  const compressionReports: PdfCompressionReport[] = [];
   const apiKey = process.env.GEMINI_API_KEY;
   const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-  try { for (const file of files) {
-    const extension = file.name.toLowerCase().split(".").pop();
-    const inferredType = ({ pdf: "application/pdf", txt: "text/plain", md: "text/markdown", csv: "text/csv", json: "application/json", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif" } as Record<string, string>)[extension ?? ""];
-    const mimeType = file.type.toLowerCase() || inferredType || "";
-    if (allowedTextTypes.has(mimeType)) {
-      if (file.size > maxTextFileBytes) throw new AttachmentError(`الملف النصي ${file.name} أكبر من 2MB.`, 413);
-      const text = await file.text();
-      parts.push({ text: `\n--- ATTACHED TEXT FILE: ${file.name} ---\n${text}\n--- END ATTACHED FILE ---` });
-      continue;
+
+  try {
+    for (const originalFile of files) {
+      const extension = originalFile.name.toLowerCase().split(".").pop();
+      const inferredType = ({ pdf: "application/pdf", txt: "text/plain", md: "text/markdown", csv: "text/csv", json: "application/json", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif" } as Record<string, string>)[extension ?? ""];
+      let mimeType = originalFile.type.toLowerCase() || inferredType || "";
+      let file = originalFile;
+
+      if (allowedTextTypes.has(mimeType)) {
+        if (file.size > maxTextFileBytes) throw new AttachmentError(`الملف النصي ${file.name} أكبر من 2MB.`, 413);
+        const text = await file.text();
+        parts.push({ text: `\n--- ATTACHED TEXT FILE: ${file.name} ---\n${text}\n--- END ATTACHED FILE ---` });
+        continue;
+      }
+
+      if (!allowedBinaryTypes.has(mimeType)) throw new AttachmentError(`نوع الملف غير مدعوم: ${file.name}`);
+
+      if (mimeType === "application/pdf" && options.autoCompressPdf && file.size > pdfCompressionThresholdBytes) {
+        const originalBytes = new Uint8Array(await file.arrayBuffer());
+        const processed = await compressPdfForAi(originalBytes, {
+          name: file.name,
+          dpi: options.pdfDpi,
+          thresholdBytes: pdfCompressionThresholdBytes,
+          signal,
+        });
+        compressionReports.push(processed.report);
+        if (processed.report.compressed) {
+          const stem = file.name.replace(/\.pdf$/i, "");
+          // File/Blob expects an ArrayBuffer-backed BlobPart. A Uint8Array may be
+          // backed by ArrayBufferLike (including SharedArrayBuffer), so copy it
+          // into a fresh ArrayBuffer before constructing the File.
+          const compressedBytes = new Uint8Array(processed.bytes.byteLength);
+          compressedBytes.set(processed.bytes);
+          file = new File([compressedBytes.buffer], `${stem}-ai-compressed.pdf`, { type: "application/pdf", lastModified: Date.now() });
+          mimeType = "application/pdf";
+        }
+      }
+
+      if (file.size <= maxInlineFileBytes) {
+        parts.push({ inlineData: { data: Buffer.from(await file.arrayBuffer()).toString("base64"), mimeType } });
+        continue;
+      }
+
+      if (!ai) throw new AttachmentError("مفتاح Gemini غير مضبوط لرفع الملف الكبير.", 503);
+      let uploaded = await ai.files.upload({ file: new Blob([await file.arrayBuffer()], { type: mimeType }), config: { mimeType, displayName: file.name, abortSignal: signal } });
+      if (uploaded.name) uploadedNames.push(uploaded.name);
+      for (let attempt = 0; uploaded.state === "PROCESSING" && attempt < 30; attempt += 1) {
+        if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        if (uploaded.name) uploaded = await ai.files.get({ name: uploaded.name });
+      }
+      if (uploaded.state === "FAILED" || !uploaded.uri) throw new AttachmentError(`تعذر تجهيز الملف الكبير: ${file.name}`, 422);
+      parts.push({ fileData: { fileUri: uploaded.uri, mimeType: uploaded.mimeType || mimeType } });
     }
-    if (!allowedBinaryTypes.has(mimeType)) throw new AttachmentError(`نوع الملف غير مدعوم: ${file.name}`);
-    if (file.size <= maxInlineFileBytes) {
-      parts.push({ inlineData: { data: Buffer.from(await file.arrayBuffer()).toString("base64"), mimeType } });
-      continue;
-    }
-    if (!ai) throw new AttachmentError("مفتاح Gemini غير مضبوط لرفع الملف الكبير.", 503);
-    let uploaded = await ai.files.upload({ file: new Blob([await file.arrayBuffer()], { type: mimeType }), config: { mimeType, displayName: file.name, abortSignal: signal } });
-    if (uploaded.name) uploadedNames.push(uploaded.name);
-    for (let attempt = 0; uploaded.state === "PROCESSING" && attempt < 30; attempt += 1) {
-      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      await new Promise((resolve) => setTimeout(resolve, 750));
-      if (uploaded.name) uploaded = await ai.files.get({ name: uploaded.name });
-    }
-    if (uploaded.state === "FAILED" || !uploaded.uri) throw new AttachmentError(`تعذر تجهيز الملف الكبير: ${file.name}`, 422);
-    parts.push({ fileData: { fileUri: uploaded.uri, mimeType: uploaded.mimeType || mimeType } });
+
+    return { parts, uploadedNames, compressionReports };
+  } catch (error) {
+    await cleanupUploadedFiles(uploadedNames);
+    throw error;
   }
-  return { parts, uploadedNames }; }
-  catch (error) { await cleanupUploadedFiles(uploadedNames); throw error; }
 }
 
 async function cleanupUploadedFiles(names: string[]) {
@@ -216,21 +255,21 @@ async function prepareLogoAccess(query: string, extraText: string, newsItems: Le
   const maxLogos = logoIntent ? 16 : 10;
   const merged = Array.from(new Map([...queryMatches, ...newsLogos].map((logo) => [logo.url, logo])).values()).slice(0, maxLogos);
 
-  const preparedImages = await Promise.all(merged.map(async (logo) => {
-    try {
-      const prepared = await cacheRemoteAgentImage(logo.url);
-      return {
-        url: logo.url,
-        displayUrl: signedAgentImagePath(logo.url, prepared.id),
-        description: `${logo.name} — ${logo.category}`,
-      };
-    } catch {
-      return null;
-    }
-  }));
-  const images: AgentImage[] = preparedImages.filter(
-    (item): item is NonNullable<(typeof preparedImages)[number]> => item !== null,
+  const imageCandidates: Array<AgentImage | null> = await Promise.all(
+    merged.map(async (logo): Promise<AgentImage | null> => {
+      try {
+        const prepared = await cacheRemoteAgentImage(logo.url);
+        return {
+          url: logo.url,
+          displayUrl: signedAgentImagePath(logo.url, prepared.id),
+          description: `${logo.name} — ${logo.category}`,
+        };
+      } catch {
+        return null;
+      }
+    }),
   );
+  const images: AgentImage[] = imageCandidates.filter((image): image is AgentImage => image !== null);
 
   const renderable = new Set(images.map((image) => image.url));
   const context = merged.map((logo, index) =>
@@ -363,8 +402,25 @@ export async function POST(request: Request) {
   nodes.push({ id: "logos", label: "Bahrain logo directory", status: logoAccess.images.length ? "done" : "skipped", ms: Date.now() - started, detail: String(logoAccess.images.length) });
 
   started = Date.now();
-  let preparedFiles: { parts: Part[]; uploadedNames: string[] } = { parts: [], uploadedNames: [] };
-  try { preparedFiles = await attachmentParts(parsed.files, request.signal); nodes.push({ id: "files", label: preparedFiles.uploadedNames.length ? "Attachments · Files API" : "Attachments", status: parsed.files.length ? "done" : "skipped", ms: Date.now() - started, detail: String(parsed.files.length) }); }
+  let preparedFiles: { parts: Part[]; uploadedNames: string[]; compressionReports: PdfCompressionReport[] } = { parts: [], uploadedNames: [], compressionReports: [] };
+  try {
+    preparedFiles = await attachmentParts(parsed.files, request.signal, { autoCompressPdf: parsed.autoCompressPdf, pdfDpi: parsed.pdfDpi });
+    const compressed = preparedFiles.compressionReports.filter((item) => item.compressed);
+    const signed = preparedFiles.compressionReports.filter((item) => item.reason === "signed");
+    const missingEngine = preparedFiles.compressionReports.filter((item) => item.reason === "engine-unavailable");
+    if (preparedFiles.compressionReports.length) {
+      const saved = compressed.reduce((sum, item) => sum + (item.originalBytes - item.finalBytes), 0);
+      const detail = compressed.length
+        ? `${compressed.length} PDF · ${parsed.pdfDpi} DPI · وفر ${(saved / (1024 * 1024)).toFixed(1)}MB${signed.length ? ` · ${signed.length} موقّع بدون ضغط` : ""}`
+        : signed.length
+          ? `${signed.length} PDF موقّع رقمياً · تم الحفاظ على الأصل`
+          : missingEngine.length
+            ? "Ghostscript غير متاح · تم استخدام الملف الأصلي"
+            : "لا حاجة للضغط";
+      nodes.push({ id: "pdf-compress", label: "PDF compression", status: missingEngine.length && !compressed.length ? "skipped" : "done", ms: Date.now() - started, detail });
+    } else nodes.push({ id: "pdf-compress", label: "PDF compression", status: "skipped", ms: 0 });
+    nodes.push({ id: "files", label: preparedFiles.uploadedNames.length ? "Attachments · Files API" : "Attachments", status: parsed.files.length ? "done" : "skipped", ms: Date.now() - started, detail: String(parsed.files.length) });
+  }
   catch (error) {
     const attachmentError = error instanceof AttachmentError ? error : new AttachmentError("تعذر تجهيز المرفقات.");
     nodes.push({ id: "files", label: "Attachments", status: "error", ms: Date.now() - started });
@@ -372,8 +428,11 @@ export async function POST(request: Request) {
   }
 
   const history = parsed.history.map((item) => `${item.role === "user" ? "User" : "Assistant"}: ${item.content}`).join("\n\n");
+  const compressionContext = preparedFiles.compressionReports.length
+    ? preparedFiles.compressionReports.map((item) => `${item.name}: ${item.compressed ? `compressed at ${item.dpi} DPI from ${item.originalBytes} to ${item.finalBytes} bytes (${item.reductionPercent}% reduction)` : item.reason === "signed" ? "digitally signed; original preserved" : item.reason === "engine-unavailable" ? "compression engine unavailable; original used" : "original used"}`).join("\n")
+    : "(no PDF compression was required)";
   const fileList = parsed.files.map((file) => `${file.name} (${file.type || "unknown"}, ${file.size} bytes)`).join("\n");
-  const prompt = `RECENT CONVERSATION:\n${history || "(none)"}\n\nPAST CONVERSATION EVIDENCE:\n${parsed.pastHistory || "(not requested; do not infer or recall older chats)"}\n\nUSER QUESTION:\n${parsed.message}\n\nATTACHMENTS:\n${fileList || "(none)"}\n\nCASE CONTEXT:\n${caseContext(ranked) || "No relevant case found."}\n\nSITE NEWS TODAY (Bahrain local date; complete curated set currently available):\n${todayNewsContext(todayNews)}\n\nSITE HOMEPAGE NEWS (exact current homepage carousel set):\n${siteDisplayedNewsContext(homepageNews)}\n\nBAHRAIN LOGO DIRECTORY:\n${logoAccess.context}\n\nWEB EVIDENCE:\n${web.context || "Web search was not requested or returned no official source."}`;
+  const prompt = `RECENT CONVERSATION:\n${history || "(none)"}\n\nPAST CONVERSATION EVIDENCE:\n${parsed.pastHistory || "(not requested; do not infer or recall older chats)"}\n\nUSER QUESTION:\n${parsed.message}\n\nATTACHMENTS:\n${fileList || "(none)"}\n\nPDF PROCESSING:\n${compressionContext}\n\nCASE CONTEXT:\n${caseContext(ranked) || "No relevant case found."}\n\nSITE NEWS TODAY (Bahrain local date; complete curated set currently available):\n${todayNewsContext(todayNews)}\n\nSITE HOMEPAGE NEWS (exact current homepage carousel set):\n${siteDisplayedNewsContext(homepageNews)}\n\nBAHRAIN LOGO DIRECTORY:\n${logoAccess.context}\n\nWEB EVIDENCE:\n${web.context || "Web search was not requested or returned no official source."}`;
 
   started = Date.now();
   try {
