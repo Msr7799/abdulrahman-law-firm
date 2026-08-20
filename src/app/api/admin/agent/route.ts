@@ -651,6 +651,7 @@ async function generate(
           operation: continuationIndex === 0 ? "final_answer" : `final_answer_continuation_${continuationIndex}`,
           signal,
           maxAttempts: envInt("GEMINI_FINAL_MAX_ATTEMPTS", 4, 1, 5),
+          maxEmptyResponseAttempts: envInt("GEMINI_EMPTY_RESPONSE_MAX_ATTEMPTS", 2, 1, 3),
           onAttemptStart: (attempt, pacedMs) => {
             if (attempt > 1) {
               onThoughtSummary?.(
@@ -661,13 +662,16 @@ async function generate(
           },
           onAttemptFailure: (attempt, info, backoffMs, willRetry) => {
             if (willRetry) {
+              const emptyRecovery = info.emptyResponse || info.code === "EMPTY_RESPONSE";
               onThoughtSummary?.(
-                `${thoughtSummary ? `${thoughtSummary}\n\n` : ""}تعرض الاستدعاء لرفض مؤقت (${info.code || info.status || "provider"})؛ سأنتظر ${(backoffMs / 1000).toFixed(1)} ثانية ثم أعيد نفس الموديل، بدون إطلاق موديل بديل فورياً.`,
+                emptyRecovery
+                  ? `${thoughtSummary ? `${thoughtSummary}\n\n` : ""}اكتملت جولة التفكير لكن لم يصل نص إجابة مرئي. سأنتظر ${(backoffMs / 1000).toFixed(1)} ثانية ثم أعيد **صياغة الجواب النهائي فقط** على نفس الأدلة بدون إعادة البحث.`
+                  : `${thoughtSummary ? `${thoughtSummary}\n\n` : ""}تعرض الاستدعاء لرفض مؤقت (${info.code || info.status || "provider"})؛ سأنتظر ${(backoffMs / 1000).toFixed(1)} ثانية ثم أعيد نفس الموديل، بدون إطلاق موديل بديل فورياً.`,
                 { model, attempt, retrying: true },
               );
             }
           },
-          call: async () => {
+          call: async ({ attempt, previousFailure }) => {
             let streamedAnswer = "";
             let streamedThought = "";
             let streamedFinishReason = "";
@@ -676,15 +680,31 @@ async function generate(
             let streamedThoughtTokens = 0;
             let streamedCode: string | undefined;
             let streamedCodeResult: string | undefined;
+            const recoveringEmptyResponse = previousFailure?.emptyResponse || previousFailure?.code === "EMPTY_RESPONSE";
+            const requestInstruction = recoveringEmptyResponse
+              ? `${continuationInstruction}\n\n--- EMPTY RESPONSE RECOVERY ---\nThe previous generation completed a reasoning turn but emitted no user-visible final answer. Return the FINAL ANSWER now. Do not restart research, do not narrate your reasoning, and do not repeat tool activity. Use only the evidence and legal conclusions already supplied in this prompt. Complete every item requested by the user and end normally with a visible answer.`
+              : continuationInstruction;
+            const recoveryThinkingConfig = recoveringEmptyResponse
+              ? (isGemini3
+                  ? { includeThoughts: true, thinkingLevel: "low" }
+                  : { includeThoughts: true, thinkingBudget: Math.min(384, isLite ? 256 : thinkingBudget) })
+              : thinkingConfig;
+
+            if (recoveringEmptyResponse) {
+              onThoughtSummary?.(
+                "استرجاع الإجابة: الجولة السابقة انتهت بدون نص مرئي، لذلك أعيد صياغة **الجواب النهائي فقط** من نفس الأدلة مع تقليل التفكير المفتوح.",
+                { model, attempt, retrying: true },
+              );
+            }
 
             const stream = await ai.models.generateContentStream({
               model,
-              contents: [{ role: "user", parts: [{ text: continuationInstruction }, ...files] }],
+              contents: [{ role: "user", parts: [{ text: requestInstruction }, ...files] }],
               config: {
                 systemInstruction: systemPrompt(activeSkillIds, includeServiceRoadmap),
                 ...(usesModernGeminiConfig(model) ? {} : { temperature: 0.18, topP: 0.82 }),
                 maxOutputTokens,
-                thinkingConfig: thinkingConfig as never,
+                thinkingConfig: recoveryThinkingConfig as never,
                 ...(toolPolicy.codeExecutionEnabled ? { tools: [{ codeExecution: {} }] } : {}),
                 abortSignal: signal,
               },
@@ -693,7 +713,8 @@ async function generate(
             for await (const chunk of stream) {
               const candidate = chunk.candidates?.[0];
               const candidateParts = candidate?.content?.parts ?? [];
-              let sawTextPart = false;
+              let sawVisibleTextPart = false;
+              let sawThoughtTextPart = false;
               for (const part of candidateParts) {
                 const typedPart = part as Part & {
                   thought?: boolean;
@@ -703,24 +724,46 @@ async function generate(
                 if (typedPart.executableCode?.code) streamedCode ??= typedPart.executableCode.code;
                 if (typedPart.codeExecutionResult?.output) streamedCodeResult ??= typedPart.codeExecutionResult.output;
                 if (!typedPart.text) continue;
-                sawTextPart = true;
                 if (typedPart.thought) {
+                  sawThoughtTextPart = true;
                   streamedThought += typedPart.text;
                   const live = mergeContinuation(thoughtSummary, streamedThought);
                   onThoughtSummary?.(live.slice(0, 7000), { model });
                 } else {
+                  sawVisibleTextPart = true;
                   streamedAnswer += typedPart.text;
                 }
               }
-              if (!sawTextPart && chunk.text) streamedAnswer += chunk.text;
+              // Only use the SDK convenience text accessor when the candidate did not expose any
+              // structured text parts. If the chunk contained thought parts, chunk.text can mirror
+              // those thoughts and must never leak them into the user-visible answer.
+              if (!sawVisibleTextPart && !sawThoughtTextPart && chunk.text) streamedAnswer += chunk.text;
               if (candidate?.finishReason) streamedFinishReason = String(candidate.finishReason);
               if (candidate?.finishMessage) streamedFinishMessage = candidate.finishMessage;
               streamedOutputTokens = Math.max(streamedOutputTokens, chunk.usageMetadata?.candidatesTokenCount ?? candidate?.tokenCount ?? 0);
               streamedThoughtTokens = Math.max(streamedThoughtTokens, (chunk.usageMetadata as { thoughtsTokenCount?: number } | undefined)?.thoughtsTokenCount ?? 0);
             }
 
+            const visibleAnswer = streamedAnswer.trim();
+            if (!visibleAnswer) {
+              const emptyError = new Error(`GEMINI_EMPTY_RESPONSE:${streamedFinishReason || "UNKNOWN"}`) as Error & {
+                status?: number;
+                code?: string;
+                details?: Record<string, unknown>;
+              };
+              emptyError.status = 502;
+              emptyError.code = "EMPTY_RESPONSE";
+              emptyError.details = {
+                finishReason: streamedFinishReason || "UNKNOWN",
+                finishMessage: streamedFinishMessage,
+                thoughtTokens: streamedThoughtTokens,
+                outputTokens: streamedOutputTokens,
+              };
+              throw emptyError;
+            }
+
             return {
-              answer: streamedAnswer.trim(),
+              answer: visibleAnswer,
               thought: streamedThought.trim(),
               finishReason: streamedFinishReason,
               finishMessage: streamedFinishMessage,
@@ -745,7 +788,6 @@ async function generate(
         codeExecutionResult ??= response.codeExecutionResult;
 
         if (chunk) answer = mergeContinuation(answer, chunk);
-        if (!answer) throw new Error(`GEMINI_EMPTY_RESPONSE${finishReason ? `:${finishReason}` : ""}`);
 
         if (finishReason !== "MAX_TOKENS") {
           return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "STOP", finishMessage, outputTokens, thoughtTokens, thoughtSummary, continuations, truncated: false, thinkingBudget, requestAttempts, toolPolicy };
@@ -759,14 +801,25 @@ async function generate(
       lastError = error;
       if (error instanceof GeminiRequestError) requestAttempts.push(...error.attempts);
       const diagnosed = error instanceof GeminiRequestError ? error.info : diagnoseGeminiError(error);
+      const emptyResponseFailure = diagnosed.emptyResponse || diagnosed.code === "EMPTY_RESPONSE" || /GEMINI_EMPTY_RESPONSE/i.test(diagnosed.providerMessage);
 
+      // Empty STOP is not a research failure. The manager already retried the same model safely;
+      // after repeated empties, move to the configured free fallback model while preserving all
+      // retrieved evidence and accumulated attempt telemetry.
+      if (emptyResponseFailure) {
+        onThoughtSummary?.(
+          `الموديل ${model} أنهى جولتين بدون نص إجابة مرئي. سأنتقل الآن إلى الموديل الاحتياطي المسموح به لصياغة الجواب النهائي من **نفس الأدلة**، بدون إعادة البحث أو RAG.`,
+          { model, retrying: true },
+        );
+        continue;
+      }
       if (diagnosed.retryable) throw error;
       if (diagnosed.dailyQuota) continue;
       const compatibilityFailure = diagnosed.status === 404 || /NOT_FOUND|not supported|unsupported|model.*not.*found/i.test(`${diagnosed.code ?? ""} ${diagnosed.providerMessage}`);
       if (!compatibilityFailure) throw error;
     }
   }
-  if (lastError instanceof GeminiRequestError) throw lastError;
+  if (lastError instanceof GeminiRequestError) throw new GeminiRequestError(lastError.info, requestAttempts.length ? requestAttempts : lastError.attempts);
   throw lastError ?? new Error("GEMINI_MODELS_UNAVAILABLE");
 }
 
@@ -1240,13 +1293,16 @@ ${logoAccess.context}`;
     });
     nodes.push({ id: "code", label: "Python sandbox", status: result.executableCode || result.codeExecutionResult ? "done" : "skipped", ms: 0, detail: result.executableCode ? "executed" : result.toolPolicy.codeExecutionEnabled ? "available · unused" : "disabled for this request" });
     const geminiRetryCount = result.requestAttempts.filter((attempt) => attempt.status === "retry").length;
+    const emptyResponseRecoveries = result.requestAttempts.filter((attempt) => attempt.code === "EMPTY_RESPONSE" || /GEMINI_EMPTY_RESPONSE/i.test(attempt.message ?? "")).length;
+    const attemptedModels = Array.from(new Set(result.requestAttempts.map((attempt) => attempt.model)));
+    const usedModelFallback = attemptedModels.length > 1;
     const geminiWaitMs = result.requestAttempts.reduce((sum, attempt) => sum + attempt.pacedMs + attempt.backoffMs, 0);
     nodes.push({
       id: "gemini",
       label: result.model,
       status: result.truncated ? "error" : "done",
       ms: Date.now() - started,
-      detail: `${result.outputTokens || 0} output · ${result.thoughtTokens || 0} thought · ${result.finishReason}${result.continuations ? ` · ${result.continuations} continuation` : ""}${geminiRetryCount ? ` · ${geminiRetryCount} retries` : ""}${geminiWaitMs ? ` · ${(geminiWaitMs / 1000).toFixed(1)}s pacing` : ""}`,
+      detail: `${result.outputTokens || 0} output · ${result.thoughtTokens || 0} thought · ${result.finishReason}${result.continuations ? ` · ${result.continuations} continuation` : ""}${emptyResponseRecoveries ? ` · ${emptyResponseRecoveries} empty recovery` : ""}${usedModelFallback ? " · fallback used" : ""}${geminiRetryCount ? ` · ${geminiRetryCount} retries` : ""}${geminiWaitMs ? ` · ${(geminiWaitMs / 1000).toFixed(1)}s pacing` : ""}`,
     });
 
     debugEvents.push({
@@ -1255,11 +1311,13 @@ ${logoAccess.context}`;
       title: "Gemini request pacing & retries",
       status: "done",
       ms: Date.now() - started,
-      summary: geminiRetryCount
-        ? `واجه Gemini رفضاً مؤقتاً وتمت إعادة المحاولة ${geminiRetryCount} مرة بعد التباعد والتراجع الأُسّي حتى نجح الطلب.`
-        : "تم تنفيذ استدعاء Gemini ضمن بوابة التباعد ولم يحتج إلى Retry من المزود.",
+      summary: emptyResponseRecoveries
+        ? `تعافى الوكيل من ${emptyResponseRecoveries} جولة انتهت دون نص إجابة مرئي.${usedModelFallback ? " تم استخدام الموديل الاحتياطي بعد استنفاد محاولات الاسترجاع على الموديل الأساسي، من دون إعادة البحث أو RAG." : " نجحت إعادة صياغة الجواب النهائي على نفس الموديل ومن نفس الأدلة."}`
+        : geminiRetryCount
+          ? `واجه Gemini رفضاً مؤقتاً وتمت إعادة المحاولة ${geminiRetryCount} مرة بعد التباعد والتراجع الأُسّي حتى نجح الطلب.`
+          : "تم تنفيذ استدعاء Gemini ضمن بوابة التباعد ولم يحتج إلى Retry من المزود.",
       input: { model: result.model, operation: "final_answer" },
-      output: { totalPacingAndBackoffMs: geminiWaitMs, retries: geminiRetryCount, requestAttempts: result.requestAttempts },
+      output: { totalPacingAndBackoffMs: geminiWaitMs, retries: geminiRetryCount, emptyResponseRecoveries, usedModelFallback, attemptedModels, requestAttempts: result.requestAttempts },
     });
 
     debugEvents.push({
@@ -1323,7 +1381,7 @@ ${logoAccess.context}`;
     const finalAnswer = `${result.text}${qualityWarning(deterministicQuality, semanticQuality)}`;
     const researchSources: AgentSource[] = allResearchEvidence.map(({ citationId, sourceType, title, url, snippet, score }) => ({ citationId, sourceType, title, url, snippet, score }));
     const newsSources = curatedNewsSources.length ? curatedNewsSources : isLegalNewsQuery(parsed.message) ? legalNewsForAgent([...todayNews, ...homepageNews]).sources.map((source, index) => ({ ...source, citationId: `N${index + 1}`, sourceType: "news" as const })) : [];
-    return NextResponse.json({ ok: true, answer: finalAnswer, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, quality: { disposition: qualityDisposition, deterministic: deterministicQuality, semantic: semanticQuality }, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated, workload: modelPolicy.workload, modelChain: modelPolicy.models, thinkingLevel: modelPolicy.thinkingLevel, toolPolicy: result.toolPolicy }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
+    return NextResponse.json({ ok: true, answer: finalAnswer, model: result.model, nodes, debugEvents, code: result.executableCode, codeResult: result.codeExecutionResult, quality: { disposition: qualityDisposition, deterministic: deterministicQuality, semantic: semanticQuality }, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, thoughtTokens: result.thoughtTokens, thinkingBudget: result.thinkingBudget, continuations: result.continuations, truncated: result.truncated, workload: modelPolicy.workload, modelChain: modelPolicy.models, thinkingLevel: modelPolicy.thinkingLevel, emptyResponseRecoveries, usedModelFallback, attemptedModels, toolPolicy: result.toolPolicy }, sources: dedupeSources([...researchSources, ...newsSources]), images: dedupeImages([...tavilyResult.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : "AI_ERROR";
     const diagnosed = rawMessage === "GEMINI_API_KEY_MISSING"

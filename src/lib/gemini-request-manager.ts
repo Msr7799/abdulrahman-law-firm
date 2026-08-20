@@ -8,6 +8,10 @@ export type GeminiErrorInfo = {
   dailyQuota: boolean;
   retryAfterMs?: number;
   userMessage: string;
+  /** Gemini finished a generation turn but emitted no user-visible answer text. */
+  emptyResponse?: boolean;
+  /** The request manager exhausted the safe same-model recovery attempts; try the configured fallback model. */
+  fallbackRecommended?: boolean;
 };
 
 export type GeminiAttemptTrace = {
@@ -158,29 +162,33 @@ export function diagnoseGeminiError(error: unknown): GeminiErrorInfo {
       return match ? Number(match[1]) : undefined;
     })();
 
+  const emptyResponse = /GEMINI_EMPTY_RESPONSE/i.test(providerMessage);
   const code =
     (typeof object.code === "string" ? object.code : undefined) ??
     (typeof object.status === "string" ? object.status : undefined) ??
     nestedString(error, ["error", "status"]) ??
+    (emptyResponse ? "EMPTY_RESPONSE" : undefined) ??
     providerMessage.match(/\b(RESOURCE_EXHAUSTED|UNAVAILABLE|DEADLINE_EXCEEDED|INVALID_ARGUMENT|PERMISSION_DENIED|NOT_FOUND|CANCELLED)\b/i)?.[1]?.toUpperCase();
 
   const retryDelayMatch = providerMessage.match(/(?:retryDelay|retry[_ -]?after)["'\s:=]*([0-9]+(?:\.[0-9]+)?)\s*s/i);
   const retryAfterMs = retryDelayMatch ? Math.ceil(Number(retryDelayMatch[1]) * 1000) : undefined;
   const dailyQuota = status === 429 && /quota_exceeded|requests? per day|per-day|\brpd\b|daily quota|quota.*day/i.test(providerMessage);
   const retryable = !dailyQuota && (
+    emptyResponse ||
     status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504 ||
     /RESOURCE_EXHAUSTED|UNAVAILABLE|DEADLINE_EXCEEDED|temporar|timeout|ECONNRESET|ETIMEDOUT|fetch failed/i.test(`${code ?? ""} ${providerMessage}`)
   );
 
   let userMessage = "تعذر الاتصال بـ Gemini.";
-  if (status === 429 && dailyQuota) userMessage = "تم بلوغ الحصة اليومية لموديل Gemini المستخدم. الانتظار لثوانٍ لن يحل هذا النوع من الحد؛ يلزم انتظار إعادة تعيين الحصة أو تغيير الموديل ضمن حصتك.";
+  if (emptyResponse) userMessage = "Gemini أكمل جولة التوليد لكنه لم يرسل نص إجابة مرئياً. سيعيد الوكيل محاولة الصياغة النهائية تلقائياً، ثم ينتقل إلى الموديل الاحتياطي فقط إذا تكرر الفراغ.";
+  else if (status === 429 && dailyQuota) userMessage = "تم بلوغ الحصة اليومية لموديل Gemini المستخدم. الانتظار لثوانٍ لن يحل هذا النوع من الحد؛ يلزم انتظار إعادة تعيين الحصة أو تغيير الموديل ضمن حصتك.";
   else if (status === 429 || /RESOURCE_EXHAUSTED/i.test(`${code ?? ""} ${providerMessage}`)) userMessage = "Gemini رفض الطلب مؤقتاً بسبب حد المعدل أو التوكنز. الوكيل سيبطئ الطلبات ويعيد المحاولة تلقائياً.";
   else if (status === 503 || /UNAVAILABLE/i.test(`${code ?? ""} ${providerMessage}`)) userMessage = "خدمة Gemini غير متاحة مؤقتاً. الوكيل سيعيد المحاولة تلقائياً بتراجع أُسّي.";
   else if (status === 400 || /INVALID_ARGUMENT/i.test(`${code ?? ""} ${providerMessage}`)) userMessage = "Gemini رفض تكوين الطلب نفسه (INVALID_ARGUMENT). هذه ليست مشكلة كوتا؛ راجع تفاصيل الخطأ في تتبّع الوكيل.";
   else if (status === 401 || status === 403 || /PERMISSION_DENIED/i.test(`${code ?? ""} ${providerMessage}`)) userMessage = "Gemini رفض صلاحية الطلب أو المفتاح. هذه ليست مشكلة ازدحام طلبات.";
   else if (status === 404 || /NOT_FOUND/i.test(`${code ?? ""} ${providerMessage}`)) userMessage = "موديل Gemini أو مورد مرتبط بالطلب غير موجود أو غير متاح للمشروع.";
 
-  return { status, code, providerMessage, retryable, dailyQuota, retryAfterMs, userMessage };
+  return { status, code, providerMessage, retryable, dailyQuota, retryAfterMs, userMessage, emptyResponse };
 }
 
 function retryDelay(attempt: number, info: GeminiErrorInfo) {
@@ -196,24 +204,35 @@ export async function runGeminiRequest<T>(args: {
   operation: string;
   signal: AbortSignal;
   maxAttempts?: number;
-  call: () => Promise<T>;
+  /** Empty visible responses are retried fewer times than transport/rate errors before model fallback. */
+  maxEmptyResponseAttempts?: number;
+  call: (context: { attempt: number; previousFailure?: GeminiErrorInfo }) => Promise<T>;
   onAttemptStart?: (attempt: number, pacedMs: number) => void;
   onAttemptFailure?: (attempt: number, info: GeminiErrorInfo, backoffMs: number, willRetry: boolean) => void;
 }): Promise<{ value: T; attempts: GeminiAttemptTrace[] }> {
   const maxAttempts = args.maxAttempts ?? (/flash-lite/i.test(args.model) ? 3 : 4);
+  const maxEmptyResponseAttempts = Math.max(1, Math.min(maxAttempts, args.maxEmptyResponseAttempts ?? 2));
   const attempts: GeminiAttemptTrace[] = [];
+  let previousFailure: GeminiErrorInfo | undefined;
+  let emptyResponseFailures = 0;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const pacedMs = await waitForPacer(args.model, args.signal);
     args.onAttemptStart?.(attempt, pacedMs);
     const started = Date.now();
     try {
-      const value = await args.call();
+      const value = await args.call({ attempt, previousFailure });
       attempts.push({ attempt, model: args.model, operation: args.operation, pacedMs, backoffMs: 0, elapsedMs: Date.now() - started, status: "done" });
       return { value, attempts };
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") throw error;
-      const info = diagnoseGeminiError(error);
+      const diagnosed = diagnoseGeminiError(error);
+      const isEmptyResponse = diagnosed.emptyResponse || diagnosed.code === "EMPTY_RESPONSE";
+      if (isEmptyResponse) emptyResponseFailures += 1;
+      const emptyRecoveryExhausted = isEmptyResponse && emptyResponseFailures >= maxEmptyResponseAttempts;
+      const info: GeminiErrorInfo = emptyRecoveryExhausted
+        ? { ...diagnosed, retryable: false, fallbackRecommended: true }
+        : diagnosed;
       const canRetry = info.retryable && attempt < maxAttempts;
       const backoffMs = canRetry ? retryDelay(attempt, info) : 0;
       attempts.push({
@@ -230,6 +249,7 @@ export async function runGeminiRequest<T>(args: {
       });
       args.onAttemptFailure?.(attempt, info, backoffMs, canRetry);
       if (!canRetry) throw new GeminiRequestError(info, attempts);
+      previousFailure = info;
       await sleep(backoffMs, args.signal);
     }
   }

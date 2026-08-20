@@ -83,3 +83,15 @@
 - The final legal prompt prohibits describing lawyer-client confidentiality as “absolute” unless the evidence literally supports it, and requires distinguishing defence/representation from regulated client transactions according to the governing source.
 - Deep constitutional/administrative requests always receive one Flash-Lite claim-to-evidence verification pass. This catches cases where every sentence has a syntactically valid `[O#]` but the source is substantively about the wrong law/topic.
 - AML quality verification explicitly checks Decision 64/2017, Decree-Law 4/2001, constitutional/professional-confidentiality holdings, equality and forced-labour reasoning, and flags historical regulations presented as current law.
+
+
+## Empty-response recovery (v21)
+
+إذا أنهى Gemini الجولة بـ `STOP` بعد إرسال ملخص التفكير ولكن بلا نص إجابة مرئي، لا يُعامل ذلك كفشل بحث أو كوتا. يقوم الوكيل بالآتي:
+
+1. يعيد **صياغة الجواب النهائي فقط** على نفس الموديل ومن نفس الأدلة، بدون إعادة Router أو Tavily أو RAG.
+2. يقلل التفكير المفتوح في محاولة الاسترجاع حتى يركز الموديل على إخراج الإجابة المرئية.
+3. بعد `GEMINI_EMPTY_RESPONSE_MAX_ATTEMPTS` (الافتراضي 2) ينتقل إلى الـ fallback المجاني المسموح به في سياسة نفس الحمل.
+4. يحتفظ بسجل المحاولات والموديلات في الديباق، ولا يخفي سبب الاسترجاع.
+
+أخطاء 429/5xx تبقى خاضعة لسياسة pacing/backoff المعتادة ولا تستخدم fallback فورياً.
