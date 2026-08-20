@@ -321,16 +321,85 @@ function modelList() {
   return (process.env.GEMINI_MODELS ?? "gemini-2.5-flash-lite,gemini-2.5-flash,gemini-3-flash").split(",").map((model) => model.trim()).filter(Boolean);
 }
 
+function envInt(name: string, fallback: number, min: number, max: number) {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.trunc(value))) : fallback;
+}
+
+function mergeContinuation(previous: string, next: string) {
+  const left = previous.trimEnd();
+  const right = next.trimStart();
+  if (!left) return right;
+  if (!right) return left;
+
+  // Gemini usually continues cleanly, but it can repeat the last sentence.
+  // Remove only a conservative exact overlap so we never delete valid legal text.
+  const maxOverlap = Math.min(700, left.length, right.length);
+  for (let size = maxOverlap; size >= 40; size -= 1) {
+    if (left.slice(-size) === right.slice(0, size)) return `${left}${right.slice(size)}`;
+  }
+  return `${left}\n\n${right}`;
+}
+
 async function generate(prompt: string, files: Part[], signal: AbortSignal) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY_MISSING");
   const ai = new GoogleGenAI({ apiKey });
+  const maxOutputTokens = envInt("GEMINI_MAX_OUTPUT_TOKENS", 8192, 4096, 32768);
+  const maxContinuations = envInt("GEMINI_MAX_CONTINUATIONS", 2, 0, 3);
   let lastError: unknown;
+
   for (const model of modelList()) {
     try {
-      const response = await ai.models.generateContent({ model, contents: [{ role: "user", parts: [{ text: prompt }, ...files] }], config: { systemInstruction: systemPrompt(), temperature: 0.22, topP: 0.85, maxOutputTokens: 2200, tools: [{ codeExecution: {} }], abortSignal: signal } });
-      const text = response.text?.trim();
-      if (text) return { text, model, executableCode: response.executableCode, codeExecutionResult: response.codeExecutionResult };
+      let answer = "";
+      let finishReason = "";
+      let finishMessage = "";
+      let outputTokens = 0;
+      let continuations = 0;
+      let executableCode: string | undefined;
+      let codeExecutionResult: string | undefined;
+
+      for (let attempt = 0; attempt <= maxContinuations; attempt += 1) {
+        if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+        const continuationInstruction = attempt === 0
+          ? prompt
+          : `${prompt}\n\n--- ANSWER ALREADY GENERATED (DO NOT REPEAT IT) ---\n${answer}\n--- END PREVIOUS ANSWER ---\n\nYour previous answer stopped only because the output-token ceiling was reached. Continue EXACTLY from the point where it stopped. Do not restart the answer, do not repeat headings or facts already written, and complete every remaining item requested by the user. End normally only after the answer is complete.`;
+
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: continuationInstruction }, ...files] }],
+          config: {
+            systemInstruction: systemPrompt(),
+            temperature: 0.22,
+            topP: 0.85,
+            maxOutputTokens,
+            tools: [{ codeExecution: {} }],
+            abortSignal: signal,
+          },
+        });
+
+        const chunk = response.text?.trim() ?? "";
+        const candidate = response.candidates?.[0];
+        finishReason = String(candidate?.finishReason ?? "");
+        finishMessage = candidate?.finishMessage ?? "";
+        outputTokens += response.usageMetadata?.candidatesTokenCount ?? candidate?.tokenCount ?? 0;
+        executableCode ??= response.executableCode;
+        codeExecutionResult ??= response.codeExecutionResult;
+
+        if (chunk) answer = mergeContinuation(answer, chunk);
+        if (!answer) throw new Error(`GEMINI_EMPTY_RESPONSE${finishReason ? `:${finishReason}` : ""}`);
+
+        if (finishReason !== "MAX_TOKENS") {
+          return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "STOP", finishMessage, outputTokens, continuations, truncated: false };
+        }
+
+        if (attempt < maxContinuations) continuations += 1;
+      }
+
+      // Do not silently pretend a token-limited answer is complete. The frontend
+      // receives this metadata and the pipeline badge makes the condition visible.
+      if (answer) return { text: answer, model, executableCode, codeExecutionResult, finishReason: finishReason || "MAX_TOKENS", finishMessage, outputTokens, continuations, truncated: true };
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
@@ -438,9 +507,15 @@ export async function POST(request: Request) {
   try {
     const result = await generate(prompt, preparedFiles.parts, request.signal);
     nodes.push({ id: "code", label: "Python sandbox", status: result.executableCode || result.codeExecutionResult ? "done" : "skipped", ms: 0, detail: result.executableCode ? "executed" : undefined });
-    nodes.push({ id: "gemini", label: result.model, status: "done", ms: Date.now() - started });
+    nodes.push({
+      id: "gemini",
+      label: result.model,
+      status: result.truncated ? "error" : "done",
+      ms: Date.now() - started,
+      detail: `${result.outputTokens || 0} tokens · ${result.finishReason}${result.continuations ? ` · ${result.continuations} continuation${result.continuations === 1 ? "" : "s"}` : ""}`,
+    });
     const newsSources = isLegalNewsQuery(parsed.message) ? legalNewsForAgent([...todayNews, ...homepageNews]).sources : [];
-    return NextResponse.json({ ok: true, answer: result.text, model: result.model, nodes, code: result.executableCode, codeResult: result.codeExecutionResult, sources: dedupeSources([...web.sources, ...newsSources]), images: dedupeImages([...web.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
+    return NextResponse.json({ ok: true, answer: result.text, model: result.model, nodes, code: result.executableCode, codeResult: result.codeExecutionResult, generation: { finishReason: result.finishReason, finishMessage: result.finishMessage, outputTokens: result.outputTokens, continuations: result.continuations, truncated: result.truncated }, sources: dedupeSources([...web.sources, ...newsSources]), images: dedupeImages([...web.images, ...logoAccess.images]), caseMatches: ranked.map((item) => { const lawCase = item.lawCase; return { id: lawCase.id, caseNumber: lawCase.caseNumber, caseYear: lawCase.caseYear, caseType: lawCase.caseType, clientName: lawCase.clientName, accusedName: lawCase.accusedName, victimName: lawCase.victimName, court: lawCase.court, status: lawCase.status, judgment: lawCase.judgment, judgeName: lawCase.judgeName, notes: lawCase.notes, nextHearing: lawCase.nextHearing, score: Number(item.score.toFixed(2)) }; }), totalMs: Date.now() - totalStarted });
   } catch (error) {
     nodes.push({ id: "gemini", label: "Gemini", status: "error", ms: Date.now() - started });
     const message = error instanceof Error ? error.message : "AI_ERROR";
